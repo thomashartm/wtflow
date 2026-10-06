@@ -1,0 +1,1 @@
+{"compilerOptions":{"target":"ES2022","module":"commonjs","strict":true,"experimentalDecorators":true,"emitDecoratorMetadata":true,"baseUrl":".","paths":{"@matching/*":["src/matching/*"]}},"include":["src/**/*.ts"]}

@@ -43,3 +43,19 @@ transaction styling. Three reviewed insta snapshots cover these combinations.
 Acceptance: 15 tests pass across the workspace, including every diagnostic code;
 formatting and clippy with warnings denied pass on Rust 1.80.1. Mermaid syntax
 validation via Docker remains the explicit M8 gate.
+
+### M3
+
+Added specification-authored fixtures with package/build metadata and four flow
+goldens before adapters; the authoring example remains in the tree. Added
+immutable parallel parsing, repository config/rule handling, TS/Python/Java
+adapters, shared AST walker, Camel chain linearization, syntactic resolver and
+entrypoint detection. `debug-ast` was introduced early as the required grammar
+inspection aid. Go byte parity cannot be established without the prototype.
+
+Acceptance: all 20 workspace tests pass on Rust 1.80.1. Extraction checks cover
+four exact authored goldens (plus masking helper), cross-module DI, transactions,
+Python elif and multiple handlers, Camel linked routes, W101-W106 fixture,
+parallel/callbacks/loops, recursion guard and controller return-call inlining.
+Formatting and clippy with warnings denied pass. Intentional normalization and
+reference limitations are recorded in PARITY.md.

@@ -7,8 +7,10 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-
-wtflow-core = { path = "../wtflow-core" }
+clap.workspace = true
+tree-sitter.workspace = true
+wtflow-core = {path = "../wtflow-core"}
+wtflow-extract = {path = "../wtflow-extract"}
 
 [[bin]]
 name = "wtflow"

@@ -1,0 +1,6 @@
+modules:
+  - {path: ., owner: document-ai}
+index:
+  python: {enabled: true, project_name: document-ai}
+rules:
+  - {match: '^self\.ocr\.', kind: call, boundary: ocr}

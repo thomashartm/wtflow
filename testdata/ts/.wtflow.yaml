@@ -1,0 +1,12 @@
+modules:
+  - {path: src/reconciliation, owner: accounting-core}
+  - {path: src/matching, owner: matching}
+collapse: true
+index:
+  typescript: {enabled: true, args: ["--infer-tsconfig"]}
+rules:
+  - {match: '^this\.pubsub\.publish\([''"`]([^''"`]+)', kind: emit, topic: $1}
+  - {match: '^this\.dataSource\.transaction\(', tx: db, inline_callback: true}
+  - {match: '^this\.(\w+)Repository\.(save|insert|update|delete|mark\w*)', writes: $1}
+  - {match: '^this\.(\w+)Repository\.(find\w*|get\w*|exists|count)', reads: $1}
+  - {match: '^this\.aiMatcherClient\.', kind: call, boundary: ai-matcher}

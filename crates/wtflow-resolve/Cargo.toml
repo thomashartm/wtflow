@@ -9,3 +9,4 @@ license.workspace = true
 anyhow.workspace = true
 
 wtflow-core = { path = "../wtflow-core" }
+serde.workspace = true
