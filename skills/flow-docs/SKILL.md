@@ -17,7 +17,8 @@ preserve labels where both ID and code remain unchanged.
 
 Structure belongs to the AST. Never edit IDs, code, branches, boundaries, symbols,
 source references or fingerprints to make a diagram look better. For clearer
-wording, inspect `wtflow todo --json FLOW`, prepare a flat `id: label` mapping,
+wording, inspect `wtflow todo --json --context FLOW` for available SCIP documentation and
+repository glossary, prepare a flat `id: label` mapping,
 and apply it with `wtflow label FLOW LABELS.yaml`. Unknown IDs and fingerprint
 mismatches must be resolved before labeling; do not recompute a fingerprint to
 hide a manual structural edit.

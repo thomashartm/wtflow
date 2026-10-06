@@ -87,3 +87,12 @@ installation prerequisite to your repository.
 
 Use the [flow-docs skill](skills/flow-docs/SKILL.md) for assisted documentation.
 Local performance measurements and their scope are in [docs/performance.md](docs/performance.md).
+
+## Labeling context hooks
+
+`wtflow todo --json --context FLOW.flow.yaml` emits node context, available SCIP
+callee signatures/documentation, ancestor IDs and adjacent sibling IDs. It loads
+an optional `glossary.yaml` from the repository root and includes it in each
+packet. `--all` includes labeled nodes. This command is offline and does not
+modify the flow. See the [labels.cache design](docs/labels-cache.md); no cache
+storage or LLM integration is implemented.

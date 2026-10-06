@@ -138,3 +138,72 @@ fn package_indexes_merge_by_repository_relative_path() {
         assert!(cx.stale_for(&flow).is_empty());
     }
 }
+#[test]
+fn context_packets_have_real_documentation_paths_neighbors_and_glossary() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = root("ts");
+    for file in [
+        ".wtflow.yaml",
+        "src/dispatch.ts",
+        "src/matching/matchers.ts",
+        "src/matching/index.ts",
+        ".wtflow/index/meta.yaml",
+        ".wtflow/index/typescript.scip",
+    ] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::copy(fixture.join(file), path).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("glossary.yaml"),
+        "version: '1'\nterms:\n  matcher: matching strategy\n",
+    )
+    .unwrap();
+    let mut cx = Cx::load(dir.path()).unwrap();
+    cx.enable_scip(true).unwrap();
+    let mut flow = cx
+        .extract("src/dispatch.ts", "Dispatch.run", None, 2)
+        .unwrap();
+    let fingerprint = flow.fingerprint.clone();
+    let packets = wtflow_extract::context::packets(&cx, &flow, false).unwrap();
+    let packet = packets
+        .iter()
+        .find(|p| p.node.target.as_deref() == Some("ExactMatcher.match"))
+        .unwrap();
+    assert!(packet.callee.as_ref().unwrap().signature.contains("match"));
+    assert!(packet
+        .callee
+        .as_ref()
+        .unwrap()
+        .documentation
+        .iter()
+        .any(|s| s.contains("exact match score")));
+    assert_eq!(packet.ancestor_path, vec![flow.steps[1].id.clone()]);
+    assert_eq!(
+        packet.glossary.as_ref().unwrap()["terms"]["matcher"],
+        "matching strategy"
+    );
+    assert_eq!(
+        packets[0].neighbors.next.as_deref(),
+        Some(flow.steps[1].id.as_str())
+    );
+    assert!(packets[0].neighbors.previous.is_none());
+    assert_eq!(packets[0].path, "steps[0]");
+    let before = serde_json::to_string(&packets).unwrap();
+    assert_eq!(
+        serde_json::to_string(&wtflow_extract::context::packets(&cx, &flow, false).unwrap())
+            .unwrap(),
+        before
+    );
+    flow.steps[0].label = Some("Normalize".into());
+    assert!(wtflow_extract::context::packets(&cx, &flow, false)
+        .unwrap()
+        .iter()
+        .all(|p| p.node.id != flow.steps[0].id));
+    assert!(wtflow_extract::context::packets(&cx, &flow, true)
+        .unwrap()
+        .iter()
+        .any(|p| p.node.id == flow.steps[0].id));
+    assert_eq!(flow.fingerprint, fingerprint);
+    flow.verify_fingerprint().unwrap();
+}

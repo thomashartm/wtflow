@@ -82,14 +82,14 @@ impl Walker<'_> {
                 let inside = strip_parens(inside.trim_end_matches(':').trim());
                 let is_c =
                     n.kind() == "for_statement" && self.file.lang != crate::source::Language::Py;
-                let kind = if is_c { Kind::While } else { Kind::ForEach };
-                let code = if is_c {
-                    let cond = self.field(n, "condition");
-                    if cond.is_empty() {
-                        "for(;;)".into()
-                    } else {
-                        strip_parens(&cond)
-                    }
+                let unconditional = is_c && self.field(n, "condition").is_empty();
+                let kind = if unconditional {
+                    Kind::While
+                } else {
+                    Kind::ForEach
+                };
+                let code = if unconditional {
+                    "for(;;)".into()
                 } else {
                     inside
                 };
@@ -308,7 +308,8 @@ impl Walker<'_> {
             | Resolution::Impls { symbol, .. }
             | Resolution::External { symbol, .. } => Some(symbol.as_str()),
             Resolution::Unresolved => None,
-        };
+        }
+        .filter(|_| from_scip);
         for rule in &self.cx.config.rules {
             let captures = rule.pattern.as_ref().and_then(|r| r.captures(&code));
             if rule.pattern.is_some() && captures.is_none() {

@@ -74,3 +74,11 @@ handlers, transactions, parallel execution, and German labels. These additions
 do not change any flow structure or existing snapshot. All twelve Mermaid files
 were accepted by the minlag/mermaid-cli container using its bundled Puppeteer
 configuration.
+
+## Final requirements review
+
+Finite C-style `for` statements use `for_each`; conditionless `for` loops use
+`while`. Named Flask methods and schedule arguments are extracted from their
+annotations. Symbol-only rules require a SCIP answer and cannot accidentally
+match a heuristic display name. These corrections add regression coverage and
+do not alter the existing goldens.

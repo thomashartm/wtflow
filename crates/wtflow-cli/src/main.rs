@@ -67,6 +67,8 @@ enum Command {
         all: bool,
         #[arg(long)]
         json: bool,
+        #[arg(long, requires = "json")]
+        context: bool,
     },
     Label {
         flow: PathBuf,
@@ -195,7 +197,9 @@ fn point(text: &str, value: &str) -> Result<usize> {
     anyhow::bail!("line outside file")
 }
 fn run() -> Result<i32> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    wtflow_core::schema::initialize()?;
+    match cli.command {
         Command::Index { lang, force } => index::run(&lang, force)?,
         Command::Version => println!("wtflow {}", env!("CARGO_PKG_VERSION")),
         Command::Schema { json, config } => {
@@ -274,9 +278,27 @@ fn run() -> Result<i32> {
             labels::apply(&mut f, &patch)?;
             write(Some(&flow), &yaml::emit(&f)?)?;
         }
-        Command::Todo { flow, all, json } => {
+        Command::Todo {
+            flow,
+            all,
+            json,
+            context,
+        } => {
             let f = load(&flow)?;
             f.verify_fingerprint()?;
+            if context {
+                let entry = locate(&flow, &f)?;
+                let mut cx = Cx::load(&entry)?;
+                cx.enable_scip(false)?;
+                for file in cx.stale_for(&f) {
+                    eprintln!("warning W120 - stale index for {file}");
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&wtflow_extract::context::packets(&cx, &f, all)?)?
+                );
+                return Ok(0);
+            }
             let todo = labels::todo(&f, all);
             if json {
                 println!("{}", serde_json::to_string_pretty(&todo)?);

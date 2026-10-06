@@ -13,8 +13,11 @@ pub struct EntryPoint {
 }
 fn argument(s: &str) -> String {
     let s = s.split_once('(').map(|(_, s)| s).unwrap_or("").trim();
-    if let Some(q @ ('\'' | '"' | '`')) = s.chars().next() {
-        return s[1..].split(q).next().unwrap_or("").into();
+    if let Some((i, q)) = s
+        .char_indices()
+        .find(|(_, c)| matches!(c, '\'' | '"' | '`'))
+    {
+        return s[i + 1..].split(q).next().unwrap_or("").into();
     }
     s.split(')').next().unwrap_or("").trim().into()
 }
@@ -56,7 +59,17 @@ pub fn trigger(file: &SourceFile, f: &Func) -> String {
             "route" | "RequestMapping" => Some("GET"),
             _ => None,
         };
-        if let Some(verb) = verb {
+        if let Some(default_verb) = verb {
+            let explicit_verb = if short == "route" {
+                raw.split_once("methods")
+                    .map(|(_, value)| argument(&format!("({value}")))
+            } else if short == "RequestMapping" {
+                raw.split_once("RequestMethod.")
+                    .map(|(_, value)| value.chars().take_while(char::is_ascii_uppercase).collect())
+            } else {
+                None
+            };
+            let verb = explicit_verb.as_deref().unwrap_or(default_verb);
             let path = format!("/{}/{}", prefix.trim_matches('/'), arg.trim_matches('/'))
                 .replace("//", "/");
             return format!(

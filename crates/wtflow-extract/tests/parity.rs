@@ -196,3 +196,35 @@ fn controller_return_call_is_inlined_before_return() {
     );
     assert_eq!(flow.steps[1].kind, Kind::Return);
 }
+#[test]
+fn finite_classic_for_flask_methods_and_named_schedule_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".wtflow.yaml"), "collapse: false\n").unwrap();
+    std::fs::write(
+        dir.path().join("loops.ts"),
+        "function loops() { for (let i = 0; i < 3; i++) { send(i); } for (;;) { break; } }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("app.py"),
+        "@app.route('/upload', methods=['POST'])\ndef upload():\n    send()\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Jobs.java"),
+        "class Jobs { @Scheduled(cron = \"0 * * * *\") void tick() { work(); } }\n",
+    )
+    .unwrap();
+    let cx = Cx::load(dir.path()).unwrap();
+    let flow = cx.extract("loops.ts", "loops", None, 0).unwrap();
+    assert_eq!(flow.steps[0].kind, Kind::ForEach);
+    assert_eq!(flow.steps[1].kind, Kind::While);
+    assert!(cx
+        .entrypoints()
+        .iter()
+        .any(|e| e.trigger == "http POST /upload"));
+    assert!(cx
+        .entrypoints()
+        .iter()
+        .any(|e| e.trigger == "schedule 0 * * * *"));
+}

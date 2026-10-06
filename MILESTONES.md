@@ -15,8 +15,8 @@ Each milestone must pass its checks and be committed before the next begins.
 
 ## Evidence
 
-Work in progress. A milestone is complete only when its acceptance evidence is
-recorded here and its commit exists.
+M1–M9 are implemented and locally validated, with the evidence and limitations
+recorded below. Optional M10 is not implemented. Each milestone has its own commit.
 
 ### M1
 
@@ -125,3 +125,19 @@ builds on Linux arm64 and emits byte-identical dispatch output to the native CLI
 No remote exists, so hosted CI/release-matrix execution and artifact publication
 are not claimed. The workflow defines Linux x86_64/arm64 musl and macOS
 x86_64/arm64 builds without publishing a release or image.
+
+### M9
+
+Added offline `todo --json --context` packets with the node, callee signature and
+SCIP documentation, ancestor IDs, sibling IDs, and optional repository glossary.
+Added the labels.cache design note; no cache implementation or LLM calls are
+introduced. Updated the README and flow-docs skill with the context workflow.
+
+Acceptance: all 35 workspace tests pass on Rust 1.80.1 and stable. Context tests
+cover real SCIP documentation, deterministic packets, glossary passthrough,
+unlabeled/all selection, unchanged fingerprints, and operation with an empty
+PATH. Formatting, clippy with warnings denied, and golden comparisons pass;
+the native release binary builds. Final review also corrected finite C-style
+loop classification, Flask/Spring annotation handling, and symbol-only rules,
+and initialized both embedded schemas at CLI startup. Regression tests cover
+the extraction corrections, and no existing goldens changed (see PARITY.md).

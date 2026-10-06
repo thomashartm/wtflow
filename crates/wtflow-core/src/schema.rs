@@ -10,7 +10,7 @@ pub fn value(config: bool) -> Result<Value> {
     serde_yaml_ng::from_str(if config { CONFIG } else { FLOW })
         .context("embedded schema:1: invalid YAML")
 }
-pub fn validate(value: &Value, config: bool) -> Result<()> {
+fn validator(config: bool) -> Result<&'static JSONSchema> {
     let cell = if config {
         &CONFIG_VALIDATOR
     } else {
@@ -23,10 +23,17 @@ pub fn validate(value: &Value, config: bool) -> Result<()> {
             .compile(&schema)
             .map_err(|e| e.to_string())
     });
-    let validator = compiled
+    compiled
         .as_ref()
-        .map_err(|e| anyhow!("embedded schema:1: {e}"))?;
-    if let Err(errors) = validator.validate(value) {
+        .map_err(|e| anyhow!("embedded schema:1: {e}"))
+}
+pub fn initialize() -> Result<()> {
+    validator(false)?;
+    validator(true)?;
+    Ok(())
+}
+pub fn validate(value: &Value, config: bool) -> Result<()> {
+    if let Err(errors) = validator(config)?.validate(value) {
         let mut messages: Vec<_> = errors
             .map(|e| format!("{}: {}", e.instance_path, e))
             .collect();

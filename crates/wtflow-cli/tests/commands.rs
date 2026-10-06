@@ -214,3 +214,35 @@ fn debug_resolve_uses_committed_indexes_for_all_languages() {
         );
     }
 }
+#[test]
+fn context_cli_is_offline_and_does_not_modify_flow() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join("glossary.yaml"),
+        "version: 'v1'\nterms: {item: invoice}\n",
+    )
+    .unwrap();
+    let path = dir.path().join("docs/run.flow.yaml");
+    let before = std::fs::read(&path).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_wtflow"))
+        .current_dir(dir.path())
+        .env("PATH", "")
+        .args(["todo", "--json", "--context", "docs/run.flow.yaml"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let packets: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(packets[0]["glossary"]["version"], "v1");
+    assert!(packets[0]["callee"].is_null());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        run(dir.path(), &["todo", "--context", "docs/run.flow.yaml"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
