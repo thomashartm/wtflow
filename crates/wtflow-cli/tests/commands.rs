@@ -195,3 +195,22 @@ fn committed_index_modified_source_warns_and_falls_back() {
     assert_eq!(checked.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&checked.stdout).contains("error W120"));
 }
+#[test]
+fn debug_resolve_uses_committed_indexes_for_all_languages() {
+    let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
+    for (lang, position, prefix) in [
+        ("ts", "src/control.ts:4:5", "scip-typescript"),
+        ("py", "control.py:5:9", "scip-python"),
+        ("java", "src/main/java/demo/Control.java:6:7", "scip-java"),
+    ] {
+        let out = ok(&fixtures.join(lang), &["debug-resolve", position]);
+        let resolution: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(
+            resolution["Def"]["symbol"]
+                .as_str()
+                .unwrap()
+                .starts_with(prefix),
+            "{out}"
+        );
+    }
+}

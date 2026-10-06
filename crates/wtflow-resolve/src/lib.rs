@@ -64,4 +64,6 @@ impl Resolver for HeuristicResolver {
         vec![]
     }
 }
+pub mod chain;
 pub mod metadata;
+pub mod scip;

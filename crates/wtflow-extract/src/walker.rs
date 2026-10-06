@@ -289,9 +289,9 @@ impl Walker<'_> {
             return vec![];
         }
         let callee = functions::callee(call);
-        let resolution = callee
+        let (resolution, from_scip) = callee
             .map(|c| {
-                self.cx.resolver().resolve(
+                self.cx.chain.resolve_with_origin(
                     &self.file.path,
                     ByteRange {
                         start: c.start_byte(),
@@ -299,7 +299,10 @@ impl Walker<'_> {
                     },
                 )
             })
-            .unwrap_or(Resolution::Unresolved);
+            .unwrap_or((Resolution::Unresolved, false));
+        if !from_scip && !matches!(resolution, Resolution::Unresolved) {
+            self.scope.heuristic_used = true;
+        }
         let symbol = match &resolution {
             Resolution::Def { symbol, .. }
             | Resolution::Impls { symbol, .. }
@@ -342,6 +345,9 @@ impl Walker<'_> {
             node.topic = expand(&rule.rule.topic);
             node.target = expand(&rule.rule.target);
             node.tx = expand(&rule.rule.tx);
+            if from_scip {
+                node.symbol = symbol.map(str::to_owned);
+            }
             node.reads = expand(&rule.rule.reads).into_iter().collect();
             node.writes = expand(&rule.rule.writes).into_iter().collect();
             if rule.rule.inline_callback {
@@ -389,21 +395,25 @@ impl Walker<'_> {
                 symbol,
                 file,
                 range,
-            } => vec![self.resolved(call, code, &symbol, &file, range)],
-            Resolution::External { symbol: _, package } => {
+            } => vec![self.resolved(call, code, &symbol, &file, range, from_scip)],
+            Resolution::External { symbol, package } => {
                 let mut n = self.node(Kind::Call, code, call);
                 n.boundary = Some(package);
+                if from_scip {
+                    n.symbol = Some(symbol);
+                }
                 vec![n]
             }
             Resolution::Impls { symbol, mut impls } => {
                 impls.sort_by(|a, b| a.symbol.cmp(&b.symbol));
                 if impls.len() == 1 {
                     let d = &impls[0];
-                    return vec![self.resolved(call, code, &d.symbol, &d.file, d.range)];
+                    return vec![self.resolved(call, code, &d.symbol, &d.file, d.range, from_scip)];
                 }
                 let mut n = self.node(Kind::Switch, format!("dispatch {symbol}"), call);
                 for d in impls {
-                    let child = self.resolved(call, code.clone(), &d.symbol, &d.file, d.range);
+                    let child =
+                        self.resolved(call, code.clone(), &d.symbol, &d.file, d.range, from_scip);
                     n.cases.push(Case {
                         when: d.symbol,
                         fallthrough: None,
@@ -422,6 +432,7 @@ impl Walker<'_> {
         symbol: &str,
         file: &str,
         range: ByteRange,
+        from_scip: bool,
     ) -> Node {
         let func = self
             .cx
@@ -432,12 +443,18 @@ impl Walker<'_> {
             .filter(|f| f.range.start <= range.start && f.range.end >= range.end)
             .min_by_key(|f| f.range.end - f.range.start);
         let mut n = self.node(Kind::Call, code, call);
+        if from_scip {
+            n.symbol = Some(symbol.into());
+        }
         n.target = Some(func.map(|f| f.symbol()).unwrap_or_else(|| symbol.into()));
         let owner = self.cx.config.owner(file);
         if !owner.is_empty() && owner != self.scope.owner {
             n.boundary = Some(owner);
         }
-        let key = format!("{file}#{symbol}");
+        let key = format!(
+            "{file}#{}",
+            func.map(|f| f.symbol()).unwrap_or_else(|| symbol.into())
+        );
         if let Some(f) = func {
             if self.scope.depth < self.scope.max_depth && !self.scope.path.contains(&key) {
                 self.scope.path.push(key);

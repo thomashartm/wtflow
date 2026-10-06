@@ -1,0 +1,48 @@
+
+T
+	scip-java0.0.0-SNAPSHOT3file:///Users/thomas/projects/wtflow/testdata/java/ º
+src/main/java/demo/Control.java5!scip-java maven . . demo/Control#BZ
+ 8,scip-java maven . . demo/Control#`<init>`().BA+scip-java maven . . demo/Control#control().BZ 2(scip-java maven jdk 25 java/lang/String#Blocal 0BR2(scip-java maven jdk 25 java/lang/String#B	local 1BR	local 0Blocal 1B
+;1scip-java maven jdk 25 java/lang/String#equals().B2(scip-java maven . . demo/Control#send().B
+local 1B<(scip-java maven . . demo/Control#send().B	R	62(scip-java maven jdk 25 java/lang/String#B	local 2B	R	2(scip-java maven jdk 25 java/lang/System#B	!6,scip-java maven jdk 25 java/lang/System#out.B	"%A7scip-java maven jdk 25 java/io/PrintStream#println(+8).B	&-local 2B	.2E
+!scip-java maven . . demo/Control#(2Control:"java*class ControlK
+,scip-java maven . . demo/Control#`<init>`().(	2<init>:"java*	Control()^
++scip-java maven . . demo/Control#control().(2control:$"java*void control(String[] items)U
+local 02items:"java*String[] itemsB+scip-java maven . . demo/Control#control().S
+local 1(=2item:"java*String itemB+scip-java maven . . demo/Control#control().R
+(scip-java maven . . demo/Control#send().(2send:"java*void send(String item)N
+local 22item:"java*String itemB(scip-java maven . . demo/Control#send()."javaê&
+src/main/java/demo/Routes.java"scip-java maven . . org/B
+)scip-java maven . . org/apache/B/%scip-java maven . . org/apache/camel/B7-scip-java maven . . org/apache/camel/builder/Bndscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#B ,4 scip-java maven . . demo/Routes#BZ 7+scip-java maven . . demo/Routes#`<init>`().Bndscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#B(B,scip-java maven . . demo/Routes#configure().BZ ukscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#from().Byoscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/RouteDefinition#routeId().B |rscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#choice().Bwmscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ChoiceDefinition#when().Byoscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/BuilderSupport#simple().Bxnscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#to().B	|rscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ChoiceDefinition#otherwise().Bxnscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#to().Bvlscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ChoiceDefinition#end().B'*ukscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#from().Byoscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/RouteDefinition#routeId().B"}sscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#split(+1).B	wmscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/BuilderSupport#body().B	{qscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#doTry().B	xnscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#to().B	wmscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/TryDefinition#doCatch().B
+5+scip-java maven jdk 25 java/lang/Exception#B
+;1scip-java maven jdk 25 java/lang/Exception#class.B
+xnscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#to().B
+ "yoscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#end().B
+25uscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#wireTap(+3).Bwmscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/WireTapDefinition#end().B-0ukscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#from().Byoscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/RouteDefinition#routeId().B!Ävscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#transacted().Bxnscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/model/ProcessorDefinition#to().B¯
+ scip-java maven . . demo/Routes#"h
+dscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#"j
+fscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/BuilderSupport#"^
+Zscip-java maven maven/org.apache.camel/camel-api 4.8.0 org/apache/camel/CamelContextAware#"`
+\scip-java maven maven/org.apache.camel/camel-api 4.8.0 org/apache/camel/spi/HasCamelContext#"Z
+Vscip-java maven maven/org.apache.camel/camel-api 4.8.0 org/apache/camel/RoutesBuilder#"n
+jscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/ModelRoutesBuilder#"T
+Pscip-java maven maven/org.apache.camel/camel-api 4.8.0 org/apache/camel/Ordered#"^
+Zscip-java maven maven/org.apache.camel/camel-api 4.8.0 org/apache/camel/spi/ResourceAware#(2Routes:0"java*(public class Routes extends RouteBuilderP
++scip-java maven . . demo/Routes#`<init>`().(	2<init>:"java*public Routes()‘
+,scip-java maven . . demo/Routes#configure()."v
+pscip-java maven maven/org.apache.camel/camel-core-model 4.8.0 org/apache/camel/builder/RouteBuilder#configure().(2	configure:"java*public void configure()"java±
+ src/main/java/demo/Resource.java&scip-java maven . . jakarta/B)scip-java maven . . jakarta/ws/B,"scip-java maven . . jakarta/ws/rs/BYOscip-java maven maven/jakarta.ws.rs/jakarta.ws.rs-api 3.1.0 jakarta/ws/rs/POST#B&scip-java maven . . jakarta/B)scip-java maven . . jakarta/ws/B,"scip-java maven . . jakarta/ws/rs/BYOscip-java maven maven/jakarta.ws.rs/jakarta.ws.rs-api 3.1.0 jakarta/ws/rs/Path#B&scip-java maven . . jakarta/B2(scip-java maven . . jakarta/transaction/Btjscip-java maven maven/jakarta.transaction/jakarta.transaction-api 2.0.1 jakarta/transaction/Transactional#B("scip-java maven . . org/B
+* scip-java maven . . org/eclipse/B7-scip-java maven . . org/eclipse/microprofile/B@6scip-java maven . . org/eclipse/microprofile/reactive/B (J@scip-java maven . . org/eclipse/microprofile/reactive/messaging/B)2´†scip-java maven maven/org.eclipse.microprofile.reactive.messaging/microprofile-reactive-messaging-api 3.0.1 org/eclipse/microprofile/reactive/messaging/Emitter#B3:YOscip-java maven maven/jakarta.ws.rs/jakarta.ws.rs-api 3.1.0 jakarta/ws/rs/Path#B6"scip-java maven . . demo/Resource#BZ 9-scip-java maven . . demo/Resource#`<init>`().B´†scip-java maven maven/org.eclipse.microprofile.reactive.messaging/microprofile-reactive-messaging-api 3.0.1 org/eclipse/microprofile/reactive/messaging/Emitter#B	2(scip-java maven jdk 25 java/lang/String#B
+>*scip-java maven . . demo/Resource#emitter.BRYOscip-java maven maven/jakarta.ws.rs/jakarta.ws.rs-api 3.1.0 jakarta/ws/rs/POST#Btjscip-java maven maven/jakarta.transaction/jakarta.transaction-api 2.0.1 jakarta/transaction/Transactional#B	A+scip-java maven . . demo/Resource#create().B
+Z 2(scip-java maven jdk 25 java/lang/String#B
+local 0B
+#R
+#4*scip-java maven . . demo/Resource#emitter.B≤ßscip-java maven maven/org.eclipse.microprofile.reactive.messaging/microprofile-reactive-messaging-api 3.0.1 org/eclipse/microprofile/reactive/messaging/Emitter#send().Blocal 0Bb
+"scip-java maven . . demo/Resource#(2Resource:0"java*(@Path("/journals")
+public class ResourceT
+-scip-java maven . . demo/Resource#`<init>`().(	2<init>:"java*public Resource()X
+*scip-java maven . . demo/Resource#emitter.(2emitter:"java*Emitter<String> emitterx
++scip-java maven . . demo/Resource#create().(2create:?"java*7@POST
+@Transactional
+public void create(String journal)W
+local 02journal:"java*String journalB+scip-java maven . . demo/Resource#create()."java

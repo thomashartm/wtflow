@@ -162,7 +162,10 @@ fn locate(flow_path: &Path, flow: &Flow) -> Result<PathBuf> {
 }
 fn reextract(path: &Path, flow: &Flow) -> Result<(Flow, Vec<String>)> {
     let entry = locate(path, flow)?;
-    let cx = Cx::load(&entry)?;
+    let mut cx = Cx::load(&entry)?;
+    if flow.resolution != wtflow_core::ResolutionMode::Heuristic {
+        cx.enable_scip(false)?;
+    }
     let new = cx.extract(
         &flow.entry.file,
         &flow.entry.symbol,
@@ -231,17 +234,16 @@ fn run() -> Result<i32> {
             merge,
             output,
         } => {
-            anyhow::ensure!(
-                !matches!(resolver, ResolverMode::Scip),
-                "SCIP resolver is not implemented until M6; use --resolver heuristic"
-            );
             let (path, symbol) = entry
                 .rsplit_once('#')
                 .context("--entry must be FILE#SYMBOL")?;
             let path = Path::new(path)
                 .canonicalize()
                 .with_context(|| format!("{path}:1: entry"))?;
-            let cx = Cx::load(&path)?;
+            let mut cx = Cx::load(&path)?;
+            if !matches!(resolver, ResolverMode::Heuristic) {
+                cx.enable_scip(matches!(resolver, ResolverMode::Scip))?;
+            }
             let relative = path
                 .strip_prefix(&cx.config.root)?
                 .to_string_lossy()
@@ -429,7 +431,8 @@ fn run() -> Result<i32> {
                 .rsplit_once(':')
                 .context("position must be FILE:LINE:COL")?;
             let file = Path::new(file).canonicalize()?;
-            let cx = Cx::load(&file)?;
+            let mut cx = Cx::load(&file)?;
+            cx.enable_scip(false)?;
             let relative = file
                 .strip_prefix(&cx.config.root)?
                 .to_string_lossy()

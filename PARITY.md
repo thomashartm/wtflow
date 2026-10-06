@@ -32,3 +32,35 @@ controller-to-service inlining. I/O nested in a call's arguments remains outside
 the analysis. Statement-free catch bodies are represented as `(error ignored)`.
 Camel metadata calls (`from`, `routeId`) are reflected in flow headers; only
 behavioral DSL operations become steps.
+
+## M6 SCIP goldens and index compatibility
+
+The M3 heuristic goldens remain as regression references. New `*-scip.flow.yaml`
+files capture the official-indexer variants:
+
+- TypeScript control: the declared `send` function is now resolved; `do` becomes
+  `call`, its ID becomes `call_send`, and target/symbol identify its SCIP
+  declaration. There is no function body to inline. No other structure changes.
+- Python and Java control: the call's SCIP symbol is added. Structure, IDs,
+  source spans, and display targets are unchanged.
+- Every SCIP variant changes the resolution header to `scip`. Fingerprints
+  change because the symbol (and for TypeScript the kind/ID/target) is structural.
+- The new dispatch golden covers an alias pointing through a barrel, and an
+  interface with two implementations. SCIP inlines `normalize`, records the
+  TypeScript standard-library package boundary for `trim`, and emits an ordered
+  dispatch switch with ExactMatcher/FuzzyMatcher cases and W113. Heuristics
+  cannot resolve the barrel or interface declaration.
+
+Real committed indexes were produced by scip-typescript 0.4.0, scip-python 0.6.6,
+and the scip-java 0.13.1 artifact. That Java artifact reports
+`scip-java version 0.0.0-SNAPSHOT`; metadata preserves its actual version output.
+The Python fixture supplies an explicit empty package environment; dependency
+symbols for FastAPI are therefore not claimed. Java's newer typed range fields
+are decoded from standard protobuf fields 8/9 because current scip bindings
+require Rust 1.81; the permitted scip 0.5.2 bindings retain Rust 1.80 support.
+
+Missing encoding follows the requested TypeScript UTF-16/otherwise UTF-8 rule.
+Indexes from package-local `.wtflow/index` directories are rebased to repository
+relative paths. Definitions and relationships are collected on load; document
+call-site tables are decoded and cached on first lookup. Stale entry and target
+files fall back to heuristics, omit SCIP symbols, and report W120.

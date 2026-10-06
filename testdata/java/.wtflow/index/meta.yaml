@@ -1,0 +1,8 @@
+commit: 3c4547caa5bb8fa48bd52121750b444706d19918
+dirty: true
+files:
+  src/main/java/demo/Control.java: e7a414f0daea967828184d438a78944b26b0134ee43377094d93e015b505b562
+  src/main/java/demo/Resource.java: cc3df252cc1c89131197bce69e9504b7d000d7681e4454b3349118c5ac812603
+  src/main/java/demo/Routes.java: 446a8020b93640f770846ecf622b3f0e2427d1d35a1a8fd72255634e60d5ba3e
+indexers:
+  java: scip-java version 0.0.0-SNAPSHOT

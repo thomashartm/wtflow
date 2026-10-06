@@ -1,6 +1,6 @@
 modules:
   - {path: ., owner: document-ai}
 index:
-  python: {enabled: true, project_name: document-ai}
+  python: {enabled: true, project_name: document-ai, args: ["--environment", "environment.json"]}
 rules:
   - {match: '^self\.ocr\.', kind: call, boundary: ocr}

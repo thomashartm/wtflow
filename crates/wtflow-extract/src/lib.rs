@@ -15,12 +15,13 @@ use std::{
     path::Path,
 };
 use wtflow_core::{Entry, Flow, Kind, Node, ResolutionMode, State};
-use wtflow_resolve::{HeuristicResolver, Resolver};
+use wtflow_resolve::{chain::ChainResolver, Resolver};
 pub struct Scope {
     pub depth: usize,
     pub max_depth: usize,
     pub owner: String,
     pub path: Vec<String>,
+    pub heuristic_used: bool,
 }
 pub trait Lang: Sync {
     fn name(&self) -> &'static str;
@@ -58,7 +59,7 @@ pub struct Cx {
     pub config: config::RepositoryConfig,
     pub files: BTreeMap<String, SourceFile>,
     pub funcs: BTreeMap<String, Vec<Func>>,
-    heuristic: HeuristicResolver,
+    pub chain: ChainResolver,
     pub metadata: Option<wtflow_resolve::metadata::Metadata>,
 }
 impl Cx {
@@ -75,12 +76,82 @@ impl Cx {
             config,
             files,
             funcs,
-            heuristic,
+            chain: ChainResolver {
+                heuristic,
+                scip: None,
+                stale: BTreeSet::new(),
+            },
             metadata,
         })
     }
     pub fn resolver(&self) -> &dyn Resolver {
-        &self.heuristic
+        &self.chain
+    }
+    pub fn enable_scip(&mut self, required: bool) -> Result<()> {
+        let mut indexes = vec![];
+        for entry in walkdir::WalkDir::new(&self.config.root)
+            .into_iter()
+            .filter_entry(|e| {
+                !matches!(
+                    e.file_name().to_str(),
+                    Some("node_modules" | "target" | "build" | ".git" | ".gradle" | ".venv")
+                )
+            })
+        {
+            let entry = entry?;
+            if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "scip")
+            {
+                indexes.push(entry.into_path());
+            }
+        }
+        anyhow::ensure!(
+            !required || !indexes.is_empty(),
+            "no SCIP index; run wtflow index first"
+        );
+        if indexes.is_empty() {
+            return Ok(());
+        }
+        indexes.sort();
+        let mut metadata = self.metadata.take().unwrap_or_default();
+        for index in &indexes {
+            if let Some(base) = index
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+            {
+                if let Some(meta) = wtflow_resolve::metadata::Metadata::load(base)? {
+                    let prefix = base.strip_prefix(&self.config.root)?;
+                    for (path, hash) in meta.files {
+                        metadata
+                            .files
+                            .insert(prefix.join(path).to_string_lossy().replace('\\', "/"), hash);
+                    }
+                }
+            }
+        }
+        self.metadata = Some(metadata);
+        self.chain.stale = self
+            .files
+            .iter()
+            .filter(|(p, f)| {
+                self.metadata
+                    .as_ref()
+                    .map_or(true, |m| !m.fresh(p, f.text.as_bytes()))
+            })
+            .map(|(p, _)| p.clone())
+            .collect();
+        let sources = self
+            .files
+            .iter()
+            .map(|(p, f)| (p.clone(), std::sync::Arc::<str>::from(f.text.as_str())))
+            .collect();
+        self.chain.scip = Some(wtflow_resolve::scip::ScipResolver::load_with_metadata(
+            &self.config.root,
+            &indexes,
+            &sources,
+            self.metadata.as_ref(),
+        )?);
+        Ok(())
     }
     pub fn stale_for(&self, flow: &Flow) -> Vec<String> {
         let Some(meta) = &self.metadata else {
@@ -196,6 +267,7 @@ impl Cx {
             max_depth: depth,
             owner: owner.clone(),
             path: vec![format!("{file}#{}", func.symbol())],
+            heuristic_used: false,
         };
         let (mut steps, trigger, inputs, output) = if let Some((class, id)) = symbol.split_once('@')
         {
@@ -235,7 +307,13 @@ impl Cx {
                 symbol: symbol.into(),
                 depth,
             },
-            resolution: ResolutionMode::Heuristic,
+            resolution: if self.chain.scip.is_none() || self.chain.stale.contains(file) {
+                ResolutionMode::Heuristic
+            } else if scope.heuristic_used {
+                ResolutionMode::Mixed
+            } else {
+                ResolutionMode::Scip
+            },
             fingerprint: String::new(),
             inputs,
             output,

@@ -85,3 +85,17 @@ process test copies that index, modifies the source, verifies heuristic output
 and W120, and verifies `check --source` promotes W120 to an error. All 24 workspace
 tests, formatting and clippy pass on Rust 1.80.1. Dockerfile image construction
 has not yet been verified; SCIP lookup itself is the next milestone.
+
+### M6
+
+Added ScipResolver and ChainResolver, exact non-definition occurrence lookup,
+UTF-8/16/32 conversion/defaults, local/external definitions, implementation
+relationships, lazy call tables, symbol documentation, package-index merging,
+and freshness-aware fallback. Auto/scip extraction and debug-resolve now read
+SCIP. Recorded all M3-to-SCIP golden differences in PARITY.md.
+
+Acceptance: 32 workspace tests pass, including real-index barrel/alias dispatch,
+W113, symbol documentation, all three language goldens/debug-resolve, stale
+inlined targets, merged package indexes, exact/definition-role exclusion and
+all encoding/default cases. All three official indexers ran successfully and
+their indexes are committed. Formatting and clippy pass on Rust 1.80.1.
