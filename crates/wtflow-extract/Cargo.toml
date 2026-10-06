@@ -23,3 +23,10 @@ walkdir.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+criterion.workspace = true
+scip.workspace = true
+protobuf.workspace = true
+
+[[bench]]
+name = "performance"
+harness = false

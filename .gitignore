@@ -4,3 +4,5 @@
 **/__pycache__/
 *.snap.new
 **/build/
+
+**/target/

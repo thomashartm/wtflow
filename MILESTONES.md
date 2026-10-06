@@ -99,3 +99,12 @@ W113, symbol documentation, all three language goldens/debug-resolve, stale
 inlined targets, merged package indexes, exact/definition-role exclusion and
 all encoding/default cases. All three official indexers ran successfully and
 their indexes are committed. Formatting and clippy pass on Rust 1.80.1.
+
+### M7
+
+Added reproducible criterion corpora and benchmarks. Optimized freshness checks
+from once per occurrence to once per document. Measured entrypoint scan at
+43.080–46.823 ms, 50 MB index load at 50.041–50.463 ms, and depth-3 extraction
+after load at 28.931–29.641 microseconds. All three requested limits pass on
+Apple M4 Pro/macOS/Rust 1.80.1. See docs/performance.md for corpus and cache scope.
+All 32 workspace tests, formatting and clippy pass after the optimization.

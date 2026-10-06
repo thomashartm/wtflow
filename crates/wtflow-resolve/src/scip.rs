@@ -297,19 +297,19 @@ impl ScipResolver {
                 (1..=3).contains(&encoding),
                 "unknown SCIP position encoding"
             );
+            let stale = freshness.is_some_and(|m| !m.fresh(&path, source.text.as_bytes()));
             for field in &document {
                 if field.number == 3 {
                     self.symbol_info(SymbolInformation::parse_from_bytes(field.bytes)?);
                 } else if field.number == 2 {
                     let occurrence = Occurrence::parse_from_bytes(field.bytes)?;
-                    let range =
-                        if freshness.is_some_and(|m| !m.fresh(&path, source.text.as_bytes())) {
-                            ByteRange { start: 0, end: 0 }
-                        } else {
-                            source
-                                .range(&occurrence_range(&occurrence)?, encoding)
-                                .with_context(|| format!("{path}: invalid occurrence"))?
-                        };
+                    let range = if stale {
+                        ByteRange { start: 0, end: 0 }
+                    } else {
+                        source
+                            .range(&occurrence_range(&occurrence)?, encoding)
+                            .with_context(|| format!("{path}: invalid occurrence"))?
+                    };
                     if occurrence.symbol_roles & 1 != 0 && !occurrence.symbol.is_empty() {
                         let symbol = if occurrence.symbol.starts_with("local ") {
                             format!("{path}#{}", occurrence.symbol)
