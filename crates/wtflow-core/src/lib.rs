@@ -226,4 +226,5 @@ pub fn visit<'a>(nodes: &'a [Node], out: &mut Vec<&'a Node>) {
         }
     }
 }
+pub mod labels;
 pub mod lint;

@@ -10,7 +10,7 @@ run `cargo test --workspace --locked` and `cargo clippy --workspace --all-target
 --locked -- -D warnings`.
 
 Implementation proceeds through the acceptance gates in [MILESTONES.md](MILESTONES.md).
-The CLI is not usable until M4. Dependency versions and Cargo.lock are committed.
+The CLI supports heuristic extraction, checks and rendering. Dependency versions and Cargo.lock are committed.
 When refreshing the lockfile, use modern Cargo with
 `--config 'resolver.incompatible-rust-versions="fallback"'`, then verify on 1.80.1.
 
@@ -29,3 +29,21 @@ or implicit exception propagation. A SCIP index must be fresh for every entry
 or inlined file. Stale files fall back to heuristics and must be reported.
 
 No Go reference was available at bootstrap; see [PARITY.md](PARITY.md).
+
+## Usage
+
+```
+wtflow entrypoints testdata/ts
+wtflow extract --entry testdata/ts/src/reconciliation/service.ts#ReconciliationService.reconcile --resolver heuristic -o docs/reconcile.flow.yaml
+wtflow check --source docs/reconcile.flow.yaml
+wtflow todo --json docs/reconcile.flow.yaml
+wtflow label docs/reconcile.flow.yaml labels.yaml
+wtflow update docs/reconcile.flow.yaml
+wtflow render --lang en -o docs/reconcile.mmd docs/reconcile.flow.yaml
+wtflow schema --json
+```
+
+Run source checks from the source repository or keep flow files beneath its root.
+`label` refuses edited structure and unknown IDs without changing the file.
+Output writes replace files atomically. Exit codes: 0 success, 1 lint failure,
+2 usage or I/O failure. `check --strict` also fails on warnings.

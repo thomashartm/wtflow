@@ -59,3 +59,16 @@ Python elif and multiple handlers, Camel linked routes, W101-W106 fixture,
 parallel/callbacks/loops, recursion guard and controller return-call inlining.
 Formatting and clippy with warnings denied pass. Intentional normalization and
 reference limitations are recorded in PARITY.md.
+
+### M4
+
+Added entrypoints/extract/update/todo/label/check/render/schema/version commands,
+range-aware debug AST and heuristic debug resolution. Source checks re-extract
+from the header, and output/label writes use atomic replacement. Update and merge
+carry labels only when both ID and code match.
+
+Acceptance: 23 workspace tests pass, including three process tests using only
+std::process and tempfile. They verify unchanged label fingerprints, unknown-ID
+atomicity, E003 after code tampering, E005 after threshold changes, update label
+retention, JSON todo/schema, Markdown rendering and debug ranges. Formatting and
+clippy with warnings denied pass on Rust 1.80.1.

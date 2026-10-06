@@ -8,9 +8,16 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
 tree-sitter.workspace = true
 wtflow-core = {path = "../wtflow-core"}
 wtflow-extract = {path = "../wtflow-extract"}
+wtflow-render = {path = "../wtflow-render"}
+wtflow-resolve = {path = "../wtflow-resolve"}
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [[bin]]
 name = "wtflow"
