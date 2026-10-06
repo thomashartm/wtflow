@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/wtflow-logo.png" alt="wtflow turns tangled code into clear flows" width="640">
+</p>
+
 # wtflow — What the flow?
 
 **Turn code into a flow you can read, discuss, and keep up to date.**
