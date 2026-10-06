@@ -53,6 +53,12 @@ declaration files.
 During entrypoint discovery, files that cannot be parsed are skipped with a
 warning on standard error; the resulting list may be incomplete. Extraction
 still treats source parsing failures as errors.
+The TypeScript parser handles import types in type annotations, `using` as a
+call argument, and NUL characters inside string literals through targeted,
+AST-scoped compatibility projections. Original source text and byte positions
+are preserved. Other syntax errors still fail validation, including missing
+punctuation. `debug-ast` shows the original parser tree, including error nodes,
+to help diagnose unsupported syntax.
 `label` refuses edited structure and unknown IDs without changing the file.
 Output writes replace files atomically. Exit codes: 0 success, 1 lint failure,
 2 usage or I/O failure. `check --strict` also fails on warnings.
@@ -64,14 +70,54 @@ automatically disable animation; JSON, YAML, and Mermaid output stay unchanged.
 
 `entrypoints` saves its latest directory scan to `.wtflow/entrypoints.json` in
 the configuration root, as well as printing its existing text or JSON output.
+Discovery parses source without preparing call resolution or loading index metadata.
+Call resolution is prepared after selecting a flow, reusing those parsed files.
+Source and index scans stop at nested Git repositories and worktrees, including
+agent worktrees under `.claude/worktrees`. To inspect one, run wtflow inside that
+checkout or select it explicitly with `--dir`.
 
-`wtflow flows [--dir DIR]` includes the project's `.wtflow/flows/` store and
-legacy `.flow.yaml` documents under the selected directory. With no saved flows,
-it discovers entrypoints and asks which one to analyze. With saved flows, choose
-a number to render one or `n` to analyze an entrypoint. New analyses use automatic
-resolution and depth 2, with stable filenames based on the entry file and symbol.
-Reanalyzing an entry preserves labels on unchanged steps. Flow YAML, Mermaid
-Markdown, and lint/discovery notes are saved together in `.wtflow/flows/`.
+`wtflow flows [--dir DIR]` normally reads `.wtflow/flows/`, `docs/flows/`, and
+`.flow.yaml` files directly in the project root. It does not recursively search
+the entire project or include test goldens. An explicitly selected subdirectory
+can contain legacy documents; nested fixture directories are skipped. The
+current project path is displayed above the picker. It always discovers entrypoints
+and combines them with saved analyses in one list, marking saved entries **[saved]**.
+Choose any entry to analyze or refresh it and open the result. New analyses
+use automatic resolution and follow internal calls up to a safety depth of 32,
+with at most 512 call expansions. Recursion and both safety limits leave visible
+call nodes and explanations in the saved notes. `extract` uses the same default;
+an explicit `--depth` requests a shorter summary (or a different depth limit).
+Stable filenames use the entry file and symbol. Refreshing a saved flow upgrades
+older shallow summaries and preserves labels on unchanged steps. If source is
+unavailable, the saved snapshot can still be opened.
+Flow YAML, Mermaid Markdown, a standalone HTML explorer, and lint/discovery notes
+are saved together in `.wtflow/flows/`. In an interactive terminal the HTML view
+opens automatically in the default browser. `--no-open` and redirected input or
+output disable launching. The HTML view is offline, needs no plugins, escapes
+source-derived text, and supports expanding calls and inspecting source details.
+Call documentation, definition locations, and return types are stored separately
+in `.flow.context.json`, bound to the flow fingerprint. They do not change the
+canonical YAML or fingerprint. Missing return types are shown as unavailable.
+For/while loops have orange borders, explicit LOOP headings, and Repeat body sections.
+Personal purpose notes are browser-local drafts associated with the node ID and
+unchanged code. Export them as `labels.yaml`, then apply with
+`wtflow label FLOW labels.yaml` to persist them in the flow document.
+In a terminal, the picker uses arrow keys and Enter, live search as you type,
+Page Up/Down, and a list sized to the window. F2 toggles tests. Escape clears a
+search, then exits; Ctrl-C exits immediately. Ctrl-U clears search.
+The terminal is restored on exit and I/O errors.
+With redirected input/output or TERM=dumb, the line-based fallback remains:
+numbers select, `>`/`<` page, `/text` searches, `t` toggles tests, and `q` exits.
+Test/fixture directories and conventional test filenames are
+hidden initially. The full inventory and `entrypoints` command
+still include tests.
+
+`flows --filter PATTERN` starts the picker with an editable search;
+`entrypoints [DIR] --filter PATTERN` filters text or `--json` output while retaining
+the complete discovery inventory in `.wtflow/entrypoints.json`. Both match route,
+function, and file names case-insensitively. Plain text matches substrings, `*`
+matches any text, and `?` matches one character. Space-separated terms are ANDed.
+Quote patterns in the shell, for example `wtflow flows --filter '*Controller.create*'`.
 
 Interactive analysis can continue when unrelated source files cannot be parsed;
 these omissions and other diagnostics are saved in the `.flow.lint.txt` notes,

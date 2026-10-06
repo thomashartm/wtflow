@@ -1,4 +1,5 @@
 //! Deterministic flow documents. Structure is owned by extraction; labels by humans.
+pub mod context;
 pub mod fingerprint;
 pub mod ids;
 pub mod schema;

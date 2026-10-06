@@ -21,7 +21,7 @@ fn benches(c: &mut Criterion) {
         .measurement_time(Duration::from_secs(3));
     group.bench_function("entrypoints_1500_ts", |b| {
         b.iter(|| {
-            let cx = Cx::load(repo.path()).expect("parse fixtures");
+            let (cx, _) = Cx::load_entrypoints(repo.path()).expect("parse fixtures");
             black_box(cx.entrypoints());
         })
     });

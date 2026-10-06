@@ -1,5 +1,6 @@
 //! Mermaid rendering by exit-frontier propagation, independent of source languages.
 use wtflow_core::{Flow, Kind, Node};
+pub mod html;
 #[derive(Clone, Copy, Default)]
 pub enum Language {
     #[default]

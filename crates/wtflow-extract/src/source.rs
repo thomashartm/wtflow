@@ -36,6 +36,36 @@ pub struct SourceFile {
 }
 impl SourceFile {
     pub fn parse(path: String, text: String) -> Result<Self> {
+        let mut file = Self::parse_unchecked(path, text)?;
+        if file.lang == Language::Ts && file.tree.root_node().has_error() {
+            if let Some(input) = typescript_compatibility_input(&file) {
+                file.tree = Self::parse_unchecked(file.path.clone(), input)?.tree;
+            }
+        }
+        let tree = &file.tree;
+        let path = &file.path;
+        if tree.root_node().has_error() {
+            fn first_error(n: Node<'_>) -> Option<Node<'_>> {
+                if n.is_error() || n.is_missing() {
+                    return Some(n);
+                }
+                let mut cursor = n.walk();
+                let found = n.children(&mut cursor).find_map(first_error);
+                found
+            }
+            if let Some(n) = first_error(tree.root_node()) {
+                anyhow::bail!(
+                    "{path}:{}: syntax error ({})",
+                    n.start_position().row + 1,
+                    n.kind()
+                );
+            }
+            anyhow::bail!("{path}:1: syntax error");
+        }
+        Ok(file)
+    }
+    /// Retain parser errors for the debug-ast development command.
+    pub fn parse_unchecked(path: String, text: String) -> Result<Self> {
         let lang = Language::from_path(Path::new(&path)).context("unsupported source extension")?;
         let grammar = match lang {
             Language::Ts => {
@@ -55,17 +85,6 @@ impl SourceFile {
         let tree = parser
             .parse(&text, None)
             .with_context(|| format!("{path}:1: parsing cancelled"))?;
-        if tree.root_node().has_error() {
-            let mut all = vec![];
-            descendants(tree.root_node(), &mut all);
-            if let Some(n) = all.iter().find(|n| n.is_error() || n.is_missing()) {
-                anyhow::bail!(
-                    "{path}:{}: syntax error ({})",
-                    n.start_position().row + 1,
-                    n.kind()
-                );
-            }
-        }
         Ok(Self {
             path,
             text,
@@ -76,6 +95,26 @@ impl SourceFile {
     pub fn text(&self, n: Node<'_>) -> &str {
         &self.text[n.byte_range()]
     }
+    /// Remove AST comment nodes before flattening code. Quotes in comments must
+    /// not affect literal tracking, and // must not swallow the following code.
+    pub fn normalized(&self, n: Node<'_>) -> String {
+        fn append(file: &SourceFile, n: Node<'_>, offset: &mut usize, out: &mut String) {
+            if matches!(n.kind(), "comment" | "line_comment" | "block_comment") {
+                out.push_str(&file.text[*offset..n.start_byte()]);
+                out.push(' ');
+                *offset = n.end_byte();
+            } else {
+                for child in children(n) {
+                    append(file, child, offset, out);
+                }
+            }
+        }
+        let mut code = String::new();
+        let mut offset = n.start_byte();
+        append(self, n, &mut offset, &mut code);
+        code.push_str(&self.text[offset..n.end_byte()]);
+        normalized(&code)
+    }
     pub fn src(&self, n: Node<'_>) -> String {
         let start = n.start_position().row + 1;
         let end = n.end_position().row + 1;
@@ -84,6 +123,72 @@ impl SourceFile {
         } else {
             format!("{}:{start}-{end}", self.path)
         }
+    }
+}
+
+/// Work around three tree-sitter-typescript 0.23 grammar gaps, only where the
+/// original AST establishes the context. Reparse the projection strictly; never
+/// accept arbitrary ERROR nodes. Source text and every byte/line offset stay intact.
+fn typescript_compatibility_input(file: &SourceFile) -> Option<String> {
+    let mut nodes = Vec::new();
+    descendants(file.tree.root_node(), &mut nodes);
+    let mut input = file.text.as_bytes().to_vec();
+    let mut changed = false;
+    for n in nodes {
+        if n.is_error()
+            && file.text(n) == "using"
+            && n.parent().is_some_and(|p| p.kind() == "arguments")
+        {
+            // `using` is contextual: expect(using) is an ordinary argument.
+            input[n.start_byte()] = b'_';
+            changed = true;
+        }
+        if n.is_error() && file.text(n).bytes().all(|b| b == 0) {
+            let mut parent = n.parent();
+            while parent.is_some_and(|p| p.is_error()) {
+                parent = parent.and_then(|p| p.parent());
+            }
+            if parent.is_some_and(|p| matches!(p.kind(), "template_string" | "string")) {
+                input[n.byte_range()].fill(b'_');
+                changed = true;
+            }
+        }
+        if n.kind() != "call_expression"
+            || n.has_error()
+            || !n
+                .child_by_field_name("function")
+                .is_some_and(|f| f.kind() == "import")
+        {
+            continue;
+        }
+        let Some(args) = n.child_by_field_name("arguments") else {
+            continue;
+        };
+        if args.named_child_count() != 1
+            || !args.named_child(0).is_some_and(|a| a.kind() == "string")
+        {
+            continue;
+        }
+        let mut parent = n.parent();
+        while parent.is_some_and(|p| matches!(p.kind(), "ERROR" | "member_expression")) {
+            parent = parent.and_then(|p| p.parent());
+        }
+        if parent.is_some_and(|p| matches!(p.kind(), "type_arguments" | "type_annotation")) {
+            // Import types have no runtime behavior. Stand in for the module type
+            // with an identifier; annotations are still read from the original text.
+            for byte in &mut input[n.byte_range()] {
+                if !matches!(*byte, b'\n' | b'\r') {
+                    *byte = b' ';
+                }
+            }
+            input[n.start_byte()] = b'_';
+            changed = true;
+        }
+    }
+    if changed {
+        String::from_utf8(input).ok()
+    } else {
+        None
     }
 }
 pub fn children(n: Node<'_>) -> Vec<Node<'_>> {
@@ -146,6 +251,11 @@ fn scan_under(root: &Path, directory: &Path) -> Result<Vec<Result<SourceFile>>> 
 pub fn paths(root: &Path) -> Result<Vec<PathBuf>> {
     paths_under(root, root)
 }
+/// A nested Git checkout/worktree is a separate project. An explicitly requested
+/// scan root remains eligible, including when its .git marker is a worktree file.
+pub(crate) fn within_project(entry: &walkdir::DirEntry) -> bool {
+    entry.depth() == 0 || !entry.file_type().is_dir() || !entry.path().join(".git").exists()
+}
 fn paths_under(root: &Path, directory: &Path) -> Result<Vec<PathBuf>> {
     anyhow::ensure!(
         directory.is_dir(),
@@ -162,20 +272,21 @@ fn paths_under(root: &Path, directory: &Path) -> Result<Vec<PathBuf>> {
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
-            !matches!(
-                e.file_name().to_str(),
-                Some(
-                    "node_modules"
-                        | ".git"
-                        | ".wtflow"
-                        | ".gradle"
-                        | "build"
-                        | "dist"
-                        | "target"
-                        | ".venv"
-                        | "__pycache__"
+            within_project(e)
+                && !matches!(
+                    e.file_name().to_str(),
+                    Some(
+                        "node_modules"
+                            | ".git"
+                            | ".wtflow"
+                            | ".gradle"
+                            | "build"
+                            | "dist"
+                            | "target"
+                            | ".venv"
+                            | "__pycache__"
+                    )
                 )
-            )
         })
     {
         let entry = entry.with_context(|| format!("{}:1: scan", directory.display()))?;
@@ -197,7 +308,11 @@ pub fn normalized(s: &str) -> String {
     let mut space = false;
     for c in s.trim().trim_end_matches(';').chars() {
         if let Some(q) = quote {
-            out.push(c);
+            match c {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                _ => out.push(c),
+            }
             if escaped {
                 escaped = false;
             } else if c == '\\' {

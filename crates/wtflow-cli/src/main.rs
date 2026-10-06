@@ -1,3 +1,4 @@
+mod filter;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
@@ -10,6 +11,7 @@ use wtflow_extract::Cx;
 mod flows;
 mod index;
 mod init;
+mod picker;
 mod progress;
 use progress::Progress;
 #[derive(Parser)]
@@ -40,9 +42,15 @@ enum Language {
 enum Command {
     /// Browse saved flows, or analyze an entrypoint and save its diagram
     Flows {
+        /// Filter route, function, or file names (case-insensitive; * and ? wildcards)
+        #[arg(long, value_name = "PATTERN")]
+        filter: Option<String>,
         /// Project or directory to browse; includes the project's .wtflow/flows store
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// Save the interactive HTML view without opening a browser
+        #[arg(long)]
+        no_open: bool,
     },
     /// Create a project configuration by answering a few questions
     Init {
@@ -61,6 +69,9 @@ enum Command {
     },
     /// Find routes, event handlers, and other places where a flow begins
     Entrypoints {
+        /// Filter route, function, or file names (case-insensitive; * and ? wildcards)
+        #[arg(long, value_name = "PATTERN")]
+        filter: Option<String>,
         /// Print entries as JSON
         #[arg(long)]
         json: bool,
@@ -76,8 +87,8 @@ enum Command {
         /// Name for the flow document
         #[arg(long)]
         name: Option<String>,
-        /// How many levels of calls to expand into the flow
-        #[arg(long, default_value_t = 2)]
+        /// Follow internal calls by default; set a smaller depth for a shorter summary
+        #[arg(long, default_value_t = wtflow_extract::DEFAULT_DEPTH)]
         depth: usize,
         /// How to follow calls: auto prefers indexes, scip requires an index, heuristic uses syntax
         #[arg(long, value_enum, default_value = "auto")]
@@ -262,7 +273,16 @@ fn run() -> Result<i32> {
     let show_progress = progress::enabled(cli.no_progress);
     wtflow_core::schema::initialize()?;
     match cli.command {
-        Command::Flows { dir } => flows::run(&dir, show_progress)?,
+        Command::Flows {
+            dir,
+            no_open,
+            filter,
+        } => flows::run(
+            &dir,
+            show_progress,
+            !no_open,
+            filter.as_deref().unwrap_or(""),
+        )?,
         Command::Init { dir } => init::run(&dir)?,
         Command::Index { lang, force } => index::run(&lang, force, show_progress)?,
         Command::Version => println!("wtflow {}", env!("CARGO_PKG_VERSION")),
@@ -283,11 +303,16 @@ fn run() -> Result<i32> {
                 );
             }
         }
-        Command::Entrypoints { dir, json } => {
+        Command::Entrypoints { dir, json, filter } => {
             let mut progress = Progress::start(show_progress, "Finding entrypoints...");
             let (cx, warnings) = Cx::load_entrypoints(&dir)?;
             let entries = cx.entrypoints();
             flows::save_entries(&cx.config.root, &entries)?;
+            let filter = filter::Filter::new(filter.as_deref().unwrap_or(""));
+            let entries: Vec<_> = entries
+                .into_iter()
+                .filter(|e| filter.matches(&[&e.trigger, &e.symbol, &e.file]))
+                .collect();
             progress.finish();
             for warning in warnings {
                 eprintln!("warning: {warning}");
@@ -323,13 +348,17 @@ fn run() -> Result<i32> {
                 .strip_prefix(&cx.config.root)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let mut flow = cx.extract(&relative, symbol, name.as_deref(), depth)?;
+            let extraction = cx.extract_report(&relative, symbol, name.as_deref(), depth)?;
+            let mut flow = extraction.flow;
             let stale = cx.stale_for(&flow);
             if let Some(old) = merge {
                 labels::carry(&load(&old)?, &mut flow)?;
             }
             let text = yaml::emit(&flow)?;
             progress.finish();
+            for note in extraction.notes {
+                eprintln!("note: {note}");
+            }
             for file in stale {
                 eprintln!("warning W120 - stale index for {file}");
             }
@@ -496,8 +525,10 @@ fn run() -> Result<i32> {
         Command::DebugAst { file, range } => {
             let mut progress = Progress::start(show_progress, "Parsing source...");
             let text = read(&file)?;
-            let source =
-                wtflow_extract::source::SourceFile::parse(file.to_string_lossy().into(), text)?;
+            let source = wtflow_extract::source::SourceFile::parse_unchecked(
+                file.to_string_lossy().into(),
+                text,
+            )?;
             let node = if let Some(range) = range {
                 let (start, end) = range.split_once('-').context("range must be L:C-L:C")?;
                 let start = point(&source.text, start)?;

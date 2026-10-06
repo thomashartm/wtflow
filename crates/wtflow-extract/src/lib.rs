@@ -9,6 +9,7 @@ mod walker;
 use anyhow::{Context, Result};
 pub use entrypoints::EntryPoint;
 pub use functions::Func;
+use rayon::prelude::*;
 pub use source::SourceFile;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,12 +17,43 @@ use std::{
 };
 use wtflow_core::{Entry, Flow, Kind, Node, ResolutionMode, State};
 use wtflow_resolve::{chain::ChainResolver, Resolver};
+/// Follow application calls by default; explicit --depth remains available for summaries.
+pub const DEFAULT_DEPTH: usize = 32;
+const MAX_EXPANSIONS: usize = 512;
+pub struct Extraction {
+    pub flow: Flow,
+    pub notes: Vec<String>,
+}
 pub struct Scope {
     pub depth: usize,
     pub max_depth: usize,
     pub owner: String,
     pub path: Vec<String>,
     pub heuristic_used: bool,
+    expansions: usize,
+    notes: BTreeSet<String>,
+}
+impl Scope {
+    fn enter(&mut self, key: String, src: &str) -> bool {
+        let reason = if self.path.contains(&key) {
+            Some("recursive call")
+        } else if self.depth >= self.max_depth {
+            Some("depth limit")
+        } else if self.expansions >= MAX_EXPANSIONS {
+            Some("flow size limit")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.notes
+                .insert(format!("{src}: {reason}; left {key} as a visible call"));
+            return false;
+        }
+        self.expansions += 1;
+        self.depth += 1;
+        self.path.push(key);
+        true
+    }
 }
 pub trait Lang: Sync {
     fn name(&self) -> &'static str;
@@ -47,7 +79,13 @@ macro_rules! adapter {
                 cx.body(func, scope)
             }
             fn entrypoints(&self, cx: &Cx, file: &SourceFile) -> Vec<EntryPoint> {
-                entrypoints::detect(cx, file)
+                entrypoints::detect(
+                    cx.funcs
+                        .get(&file.path)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    file,
+                )
             }
         }
     };
@@ -62,6 +100,39 @@ pub struct Cx {
     pub chain: ChainResolver,
     pub metadata: Option<wtflow_resolve::metadata::Metadata>,
 }
+/// Parsed discovery inventory. Call resolution is prepared only for extraction.
+pub struct Discovery {
+    pub config: config::RepositoryConfig,
+    files: BTreeMap<String, SourceFile>,
+    funcs: BTreeMap<String, Vec<Func>>,
+}
+impl Discovery {
+    pub fn entrypoints(&self) -> Vec<EntryPoint> {
+        detect_entries(&self.files, &self.funcs)
+    }
+    pub fn into_context(self) -> Result<Cx> {
+        Cx::with_functions(self.config, self.files, self.funcs)
+    }
+}
+fn collect_functions(files: &BTreeMap<String, SourceFile>) -> BTreeMap<String, Vec<Func>> {
+    files
+        .par_iter()
+        .map(|(path, file)| (path.clone(), functions::collect(file)))
+        .collect()
+}
+fn detect_entries(
+    files: &BTreeMap<String, SourceFile>,
+    funcs: &BTreeMap<String, Vec<Func>>,
+) -> Vec<EntryPoint> {
+    let mut entries: Vec<_> = files
+        .par_iter()
+        .flat_map_iter(|(path, file)| {
+            entrypoints::detect(funcs.get(path).map(Vec::as_slice).unwrap_or_default(), file)
+        })
+        .collect();
+    entries.sort_by(|a, b| (&a.file, &a.symbol, &a.trigger).cmp(&(&b.file, &b.symbol, &b.trigger)));
+    entries
+}
 impl Cx {
     pub fn load(entry: &Path) -> Result<Self> {
         let config = config::RepositoryConfig::discover(entry)?;
@@ -69,22 +140,34 @@ impl Cx {
         Self::from_files(config, files)
     }
     /// Discover configuration upwards, but scan entrypoints only under `directory`.
-    pub fn load_entrypoints(directory: &Path) -> Result<(Self, Vec<String>)> {
+    pub fn load_entrypoints(directory: &Path) -> Result<(Discovery, Vec<String>)> {
         let directory = directory
             .canonicalize()
             .with_context(|| format!("{}:1: entrypoint directory", directory.display()))?;
         let config = config::RepositoryConfig::discover(&directory)?;
         let (files, warnings) = source::discover_under(&config.root, &directory)?;
-        Ok((Self::from_files(config, files)?, warnings))
+        let funcs = collect_functions(&files);
+        Ok((
+            Discovery {
+                config,
+                files,
+                funcs,
+            },
+            warnings,
+        ))
     }
     fn from_files(
         config: config::RepositoryConfig,
         files: BTreeMap<String, SourceFile>,
     ) -> Result<Self> {
-        let funcs = files
-            .iter()
-            .map(|(path, f)| (path.clone(), functions::collect(f)))
-            .collect();
+        let funcs = collect_functions(&files);
+        Self::with_functions(config, files, funcs)
+    }
+    fn with_functions(
+        config: config::RepositoryConfig,
+        files: BTreeMap<String, SourceFile>,
+        funcs: BTreeMap<String, Vec<Func>>,
+    ) -> Result<Self> {
         let heuristic = heuristic::build(&files, &funcs, &config.root)?;
         let metadata = wtflow_resolve::metadata::Metadata::load(&config.root)?;
         Ok(Self {
@@ -107,10 +190,11 @@ impl Cx {
         for entry in walkdir::WalkDir::new(&self.config.root)
             .into_iter()
             .filter_entry(|e| {
-                !matches!(
-                    e.file_name().to_str(),
-                    Some("node_modules" | "target" | "build" | ".git" | ".gradle" | ".venv")
-                )
+                source::within_project(e)
+                    && !matches!(
+                        e.file_name().to_str(),
+                        Some("node_modules" | "target" | "build" | ".git" | ".gradle" | ".venv")
+                    )
             })
         {
             let entry = entry?;
@@ -255,14 +339,7 @@ impl Cx {
         nodes
     }
     pub fn entrypoints(&self) -> Vec<EntryPoint> {
-        let mut result = vec![];
-        for f in self.files.values() {
-            result.extend(entrypoints::detect(self, f));
-        }
-        result.sort_by(|a, b| {
-            (&a.file, &a.symbol, &a.trigger).cmp(&(&b.file, &b.symbol, &b.trigger))
-        });
-        result
+        detect_entries(&self.files, &self.funcs)
     }
     pub fn extract(
         &self,
@@ -271,6 +348,15 @@ impl Cx {
         name: Option<&str>,
         depth: usize,
     ) -> Result<Flow> {
+        Ok(self.extract_report(file, symbol, name, depth)?.flow)
+    }
+    pub fn extract_report(
+        &self,
+        file: &str,
+        symbol: &str,
+        name: Option<&str>,
+        depth: usize,
+    ) -> Result<Extraction> {
         let func = self.find_symbol(file, symbol)?;
         let source = self
             .files
@@ -283,6 +369,8 @@ impl Cx {
             owner: owner.clone(),
             path: vec![format!("{file}#{}", func.symbol())],
             heuristic_used: false,
+            expansions: 0,
+            notes: BTreeSet::new(),
         };
         let (mut steps, trigger, inputs, output) = if let Some((class, id)) = symbol.split_once('@')
         {
@@ -340,7 +428,10 @@ impl Cx {
             steps,
         };
         flow.refresh_fingerprint()?;
-        Ok(flow)
+        Ok(Extraction {
+            flow,
+            notes: scope.notes.into_iter().collect(),
+        })
     }
 }
 pub mod context;

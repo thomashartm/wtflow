@@ -82,3 +82,14 @@ Finite C-style `for` statements use `for_each`; conditionless `for` loops use
 annotations. Symbol-only rules require a SCIP answer and cannot accidentally
 match a heuristic display name. These corrections add regression coverage and
 do not alter the existing goldens.
+
+### Call text containing comments and multiline literals
+
+Call/condition text now removes AST-recognized comments before whitespace
+normalization. This prevents apostrophes in comments from being interpreted as
+string delimiters, and prevents flattened `//` comments from swallowing later
+arguments. Actual newlines inside literals are displayed as `\n`/`\r` so single
+step code remains schema-valid; collapsed `do` blocks retain their block format.
+Source locations and definition documentation still refer to the original code.
+Comment wording changes no longer change these nodes' fingerprints. Existing
+goldens do not contain the affected syntax and are unchanged.

@@ -1,7 +1,6 @@
 use crate::{
     functions::Func,
-    source::{children, SourceFile},
-    Cx,
+    source::{children, Language, SourceFile},
 };
 use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -24,9 +23,22 @@ fn argument(s: &str) -> String {
 pub fn trigger(file: &SourceFile, f: &Func) -> String {
     let mut annotations = f.annotations.clone();
     if let Some(n) = crate::functions::node(file, f) {
+        if file.lang == Language::Ts {
+            // Parameter decorators (e.g. Nest's @Query) are not entrypoints.
+            annotations = children(n)
+                .into_iter()
+                .filter(|c| c.kind() == "decorator")
+                .map(|c| file.text(c))
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
         let mut previous = n.prev_named_sibling();
         let mut decorators = vec![];
         while let Some(p) = previous {
+            if p.kind() == "comment" {
+                previous = p.prev_named_sibling();
+                continue;
+            }
             if p.kind() != "decorator" {
                 break;
             }
@@ -101,32 +113,30 @@ pub fn trigger(file: &SourceFile, f: &Func) -> String {
     }
     String::new()
 }
-pub fn detect(cx: &Cx, file: &SourceFile) -> Vec<EntryPoint> {
+pub fn detect(funcs: &[Func], file: &SourceFile) -> Vec<EntryPoint> {
     let mut result = vec![];
-    if let Some(funcs) = cx.funcs.get(&file.path) {
-        for f in funcs {
-            let trigger = trigger(file, f);
-            if !trigger.is_empty() {
-                result.push(EntryPoint {
-                    file: file.path.clone(),
-                    symbol: f.symbol(),
-                    trigger,
-                    lang: file.lang.name().into(),
-                });
-            }
-            if f.name == "configure" {
-                if let Some(n) =
-                    crate::functions::node(file, f).and_then(|n| n.child_by_field_name("body"))
-                {
-                    for stmt in children(n) {
-                        if let Some(route) = crate::camel::route(file, stmt, &f.class) {
-                            result.push(EntryPoint {
-                                file: file.path.clone(),
-                                symbol: format!("{}@{}", f.class, route.id),
-                                trigger: format!("camel {}", route.uri),
-                                lang: "java".into(),
-                            });
-                        }
+    for f in funcs {
+        let trigger = trigger(file, f);
+        if !trigger.is_empty() {
+            result.push(EntryPoint {
+                file: file.path.clone(),
+                symbol: f.symbol(),
+                trigger,
+                lang: file.lang.name().into(),
+            });
+        }
+        if f.name == "configure" {
+            if let Some(n) =
+                crate::functions::node(file, f).and_then(|n| n.child_by_field_name("body"))
+            {
+                for stmt in children(n) {
+                    if let Some(route) = crate::camel::route(file, stmt, &f.class) {
+                        result.push(EntryPoint {
+                            file: file.path.clone(),
+                            symbol: format!("{}@{}", f.class, route.id),
+                            trigger: format!("camel {}", route.uri),
+                            lang: "java".into(),
+                        });
                     }
                 }
             }

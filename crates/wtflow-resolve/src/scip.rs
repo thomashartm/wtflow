@@ -1,7 +1,7 @@
 use crate::{ByteRange, Def, RelPath, Resolution, Resolver};
 use anyhow::{Context, Result};
 use protobuf::Message;
-use scip::types::{Document, Metadata, Occurrence, SymbolInformation};
+use scip::types::{Metadata, Occurrence, SymbolInformation};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -13,6 +13,7 @@ struct Field<'a> {
     number: u64,
     int: u64,
     bytes: &'a [u8],
+    raw: &'a [u8],
 }
 fn varint(bytes: &[u8], at: &mut usize) -> Result<u64> {
     let mut result = 0;
@@ -31,12 +32,14 @@ fn fields(bytes: &[u8]) -> Result<Vec<Field<'_>>> {
     let mut at = 0;
     let mut out = vec![];
     while at < bytes.len() {
+        let start = at;
         let tag = varint(bytes, &mut at)?;
         anyhow::ensure!(tag >> 3 != 0, "invalid protobuf field zero");
         let mut field = Field {
             number: tag >> 3,
             int: 0,
             bytes: &[],
+            raw: &[],
         };
         let size = match tag & 7 {
             0 => {
@@ -51,9 +54,29 @@ fn fields(bytes: &[u8]) -> Result<Vec<Field<'_>>> {
         let end = at.checked_add(size).context("protobuf length overflow")?;
         field.bytes = bytes.get(at..end).context("truncated protobuf field")?;
         at = end;
+        field.raw = &bytes[start..end];
         out.push(field);
     }
     Ok(out)
+}
+fn symbol_information(bytes: &[u8]) -> Result<SymbolInformation> {
+    // Some JS indexers encode lone UTF-16 surrogates from displayed literals
+    // into documentation. Replace only invalid documentation text; symbols,
+    // relationships and all resolution data remain strictly decoded.
+    if let Ok(info) = SymbolInformation::parse_from_bytes(bytes) {
+        return Ok(info);
+    }
+    let mut repaired = Vec::new();
+    for field in fields(bytes)? {
+        if field.number == 3 && std::str::from_utf8(field.bytes).is_err() {
+            let mut output = protobuf::CodedOutputStream::vec(&mut repaired);
+            output.write_string(3, &String::from_utf8_lossy(field.bytes))?;
+            output.flush()?;
+        } else {
+            repaired.extend_from_slice(field.raw);
+        }
+    }
+    Ok(SymbolInformation::parse_from_bytes(&repaired)?)
 }
 struct Source {
     text: Arc<str>,
@@ -85,6 +108,21 @@ impl Source {
                 .enumerate()
                 .filter_map(|(i, b)| (b == b'\n').then_some(i + 1)),
         );
+        Self { text, lines }
+    }
+    fn typescript(text: Arc<str>) -> Self {
+        // TypeScript's computeLineStarts also counts bare CR and Unicode line
+        // separators, including those inside literals. Tree-sitter rows do not;
+        // convert SCIP positions directly to original byte offsets here.
+        let mut lines = vec![0];
+        let mut chars = text.char_indices().peekable();
+        while let Some((offset, ch)) = chars.next() {
+            match ch {
+                '\r' if chars.peek().is_some_and(|(_, next)| *next == '\n') => {}
+                '\r' | '\n' | '\u{2028}' | '\u{2029}' => lines.push(offset + ch.len_utf8()),
+                _ => {}
+            }
+        }
         Self { text, lines }
     }
     fn offset(&self, line: i32, column: i32, encoding: u64) -> Result<usize> {
@@ -137,12 +175,13 @@ impl LazyDocument {
     fn calls(&self) -> &[(ByteRange, String)] {
         self.calls.get_or_init(|| {
             // Wire and ranges were validated during load; malformed indexes never reach lookup.
-            let Ok(doc) = Document::parse_from_bytes(&self.bytes) else {
+            let Ok(doc) = fields(&self.bytes) else {
                 return vec![];
             };
             let mut calls: Vec<_> = doc
-                .occurrences
                 .into_iter()
+                .filter(|f| f.number == 2)
+                .filter_map(|f| Occurrence::parse_from_bytes(f.bytes).ok())
                 .filter(|o| o.symbol_roles & 1 == 0)
                 .filter_map(|o| {
                     self.source
@@ -254,7 +293,9 @@ impl ScipResolver {
         let prefix = index_root.strip_prefix(root).unwrap_or(Path::new(""));
         for field in top {
             if field.number == 3 {
-                self.symbol_info(SymbolInformation::parse_from_bytes(field.bytes)?);
+                self.symbol_info(
+                    symbol_information(field.bytes).context("external symbol information")?,
+                );
                 continue;
             }
             if field.number != 2 {
@@ -279,6 +320,11 @@ impl ScipResolver {
             let Some(source) = sources.get(&path).cloned() else {
                 continue;
             };
+            let source = if ts {
+                Arc::new(Source::typescript(source.text.clone()))
+            } else {
+                source
+            };
             let raw_encoding = document
                 .iter()
                 .find(|f| f.number == 6)
@@ -300,9 +346,13 @@ impl ScipResolver {
             let stale = freshness.is_some_and(|m| !m.fresh(&path, source.text.as_bytes()));
             for field in &document {
                 if field.number == 3 {
-                    self.symbol_info(SymbolInformation::parse_from_bytes(field.bytes)?);
+                    self.symbol_info(
+                        symbol_information(field.bytes)
+                            .with_context(|| format!("{path}: symbol information"))?,
+                    );
                 } else if field.number == 2 {
-                    let occurrence = Occurrence::parse_from_bytes(field.bytes)?;
+                    let occurrence = Occurrence::parse_from_bytes(field.bytes)
+                        .with_context(|| format!("{path}: occurrence"))?;
                     let range = if stale {
                         ByteRange { start: 0, end: 0 }
                     } else {

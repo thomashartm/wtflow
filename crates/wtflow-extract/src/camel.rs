@@ -1,5 +1,5 @@
 use crate::{
-    source::{children, normalized, SourceFile},
+    source::{children, SourceFile},
     Cx, Scope,
 };
 use tree_sitter::Node as Ast;
@@ -26,11 +26,11 @@ fn chain(file: &SourceFile, n: Ast<'_>, ops: &mut Vec<Op>) {
         if let Some(name) = n.child_by_field_name("name") {
             let args = n
                 .child_by_field_name("arguments")
-                .map(|a| &file.text(a)[1..file.text(a).len() - 1])
-                .unwrap_or("");
+                .map(|a| file.normalized(a))
+                .unwrap_or_else(|| "()".into());
             ops.push(Op {
                 name: file.text(name).into(),
-                args: normalized(args),
+                args: args[1..args.len() - 1].trim().into(),
                 src: file.src(name),
             });
         }
@@ -223,9 +223,7 @@ fn linear(
                     let key = format!("{class}@{id}");
                     n.kind = Kind::Call;
                     n.target = Some(key.clone());
-                    if scope.depth < scope.max_depth && !scope.path.contains(&key) {
-                        scope.path.push(key);
-                        scope.depth += 1;
+                    if scope.enter(key, &n.src) {
                         n.kind = Kind::Group;
                         n.body = extract(cx, file, class, Some(id), scope);
                         scope.depth -= 1;

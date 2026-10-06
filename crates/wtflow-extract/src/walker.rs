@@ -1,6 +1,6 @@
 use crate::{
     functions,
-    source::{children, normalized, SourceFile},
+    source::{children, SourceFile},
     Cx, Scope,
 };
 use tree_sitter::Node as Ast;
@@ -18,7 +18,7 @@ impl Walker<'_> {
         n
     }
     fn text(&self, n: Ast<'_>) -> String {
-        normalized(self.file.text(n))
+        self.file.normalized(n)
     }
     fn field(&self, n: Ast<'_>, field: &str) -> String {
         n.child_by_field_name(field)
@@ -457,9 +457,7 @@ impl Walker<'_> {
             func.map(|f| f.symbol()).unwrap_or_else(|| symbol.into())
         );
         if let Some(f) = func {
-            if self.scope.depth < self.scope.max_depth && !self.scope.path.contains(&key) {
-                self.scope.path.push(key);
-                self.scope.depth += 1;
+            if self.scope.enter(key, &n.src) {
                 n.kind = Kind::Group;
                 n.body = self.cx.body(f, self.scope);
                 self.scope.depth -= 1;

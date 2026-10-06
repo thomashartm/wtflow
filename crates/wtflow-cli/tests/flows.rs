@@ -133,3 +133,229 @@ fn quitting_and_empty_directories_do_not_create_diagrams() {
         assert!(!root.path().join("one.flow.md").exists());
     }
 }
+
+#[test]
+fn searched_entry_is_saved_and_tests_are_available_without_flooding_the_picker() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".wtflow.yaml"), "collapse: true\n").unwrap();
+    fs::create_dir(root.path().join("src")).unwrap();
+    for n in 1..=12 {
+        fs::write(
+            root.path().join(format!("src/order{n:02}.ts")),
+            format!(
+                "@Controller('orders') class Order{n} {{ @Post('{n}') create() {{ send(); }} }}"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        root.path().join("src/z.spec.ts"),
+        "@Controller('fixture') class Fixture { @Get() run() { test(); } }",
+    )
+    .unwrap();
+    let listing = browse(root.path(), &[], "q\n");
+    let text = String::from_utf8(listing.stdout).unwrap();
+    assert!(text.contains("12 matches | page 1/2"));
+    assert!(text.contains("Tests: hidden (1)"));
+    assert!(!text.contains("http POST /orders/9"));
+    assert!(!text.contains("http GET /fixture"));
+    let picked = browse(root.path(), &[], "/order12.ts\n12\n");
+    assert!(
+        picked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&picked.stderr)
+    );
+    let saved = fs::read_dir(root.path().join(".wtflow/flows"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "yaml"))
+        .unwrap();
+    let flow = wtflow_core::yaml::load(&fs::read_to_string(saved).unwrap(), "test").unwrap();
+    assert_eq!(flow.entry.file, "src/order12.ts");
+    let test_pick = browse(root.path(), &[], "n\nt\n/fixture\n13\n");
+    assert!(
+        test_pick.status.success(),
+        "{}",
+        String::from_utf8_lossy(&test_pick.stderr)
+    );
+    let text = String::from_utf8(test_pick.stdout).unwrap();
+    assert!(text.contains("http GET /fixture [test]"));
+    assert!(text.contains("Saved flow:"));
+}
+
+#[test]
+fn choosing_a_flow_follows_past_two_calls_and_refreshes_old_summaries() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".wtflow.yaml"), "collapse: false\n").unwrap();
+    fs::write(root.path().join("app.ts"), "@Controller('orders') class App { @Post() run() { return this.a(); } a() { return this.b(); } b() { return this.c(); } c() { publish('complete'); return result; } }").unwrap();
+    let cx = wtflow_extract::Cx::load(root.path()).unwrap();
+    let mut old = cx.extract("app.ts", "App.run", Some("orders"), 2).unwrap();
+    let id = old.steps[0].id.clone();
+    wtflow_core::labels::apply(
+        &mut old,
+        &std::collections::BTreeMap::from([(id, "Process the order".into())]),
+    )
+    .unwrap();
+    let path = root.path().join("orders.flow.yaml");
+    fs::write(&path, wtflow_core::yaml::emit(&old).unwrap()).unwrap();
+    let output = browse(root.path(), &["--no-open"], "1\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let flow = wtflow_core::yaml::load(&fs::read_to_string(&path).unwrap(), "test").unwrap();
+    assert_eq!(flow.entry.depth, wtflow_extract::DEFAULT_DEPTH);
+    assert_eq!(flow.flow, "orders");
+    assert_eq!(flow.steps[0].label.as_deref(), Some("Process the order"));
+    let mut nodes = vec![];
+    wtflow_core::visit(&flow.steps, &mut nodes);
+    assert!(nodes.iter().any(|n| n.code == "publish('complete')"));
+    let html = fs::read_to_string(path.with_extension("html")).unwrap();
+    assert!(html.contains("Expand all"));
+    assert!(html.contains("publish(&#39;complete&#39;)"));
+    assert!(html.contains("app.ts:1"));
+    assert!(!html.contains("<script src="));
+    assert!(path.with_extension("md").exists());
+    let output = Command::new(env!("CARGO_BIN_EXE_wtflow"))
+        .current_dir(root.path())
+        .args(["extract", "--entry", "app.ts#App.run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let extracted =
+        wtflow_core::yaml::load(&String::from_utf8(output.stdout).unwrap(), "test").unwrap();
+    assert_eq!(flow.fingerprint, extracted.fingerprint);
+}
+
+#[test]
+fn default_discovery_uses_project_stores_without_exposing_golden_fixtures() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".wtflow.yaml"), "collapse: true\n").unwrap();
+    for dir in [
+        ".wtflow/flows",
+        "docs/flows",
+        "testdata/golden",
+        "fixtures",
+        "other-project/.wtflow/flows",
+    ] {
+        fs::create_dir_all(root.path().join(dir)).unwrap();
+    }
+    fs::write(
+        root.path().join(".wtflow/flows/real.flow.yaml"),
+        FLOW.replace("flow: sample", "flow: ActualApplication"),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("docs/flows/documented.flow.yaml"),
+        FLOW.replace("flow: sample", "flow: DocumentedFlow"),
+    )
+    .unwrap();
+    for path in [
+        "testdata/golden/core.flow.yaml",
+        "fixtures/fake.flow.yaml",
+        "other-project/.wtflow/flows/unrelated.flow.yaml",
+    ] {
+        fs::write(
+            root.path().join(path),
+            FLOW.replace("flow: sample", "flow: ShouldNotAppear"),
+        )
+        .unwrap();
+    }
+    let output = browse(root.path(), &[], "q\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Project: "));
+    assert!(text.contains("ActualApplication"));
+    assert!(text.contains("DocumentedFlow"));
+    assert!(!text.contains("ShouldNotAppear"));
+    assert!(!text.contains("testdata/golden"));
+    // Deliberately browsing a fixture directory is still possible.
+    let output = browse(root.path(), &["--dir", "testdata/golden"], "q\n");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("ShouldNotAppear"));
+}
+
+#[test]
+fn fixture_source_entrypoints_are_hidden_in_application_picker() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".wtflow.yaml"), "collapse: true\n").unwrap();
+    fs::create_dir_all(root.path().join("testdata/demo")).unwrap();
+    fs::write(
+        root.path().join("testdata/demo/controller.ts"),
+        "@Controller('fixture') class Fixture { @Get() run() { test(); } }",
+    )
+    .unwrap();
+    let output = browse(root.path(), &[], "q\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Tests: hidden (1)"));
+    assert!(!text.contains("http GET /fixture"));
+}
+
+#[test]
+fn saved_analysis_does_not_hide_other_entrypoints() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".wtflow.yaml"), "collapse: false\n").unwrap();
+    fs::write(root.path().join("app.ts"), "@Controller('orders') class App { @Post() create() { this.save(); } @Get() list() { this.read(); }\n/** Save an order. */\nsave(): boolean { return true; } read(): string { return 'order'; } }").unwrap();
+    assert!(browse(root.path(), &["--no-open"], "1\n").status.success());
+    let listing = browse(root.path(), &[], "q\n");
+    let text = String::from_utf8(listing.stdout).unwrap();
+    assert!(text.contains("All flows | 2 matches"), "{text}");
+    assert!(text.contains("http POST /orders [saved]"));
+    assert!(text.contains("http GET /orders"));
+    assert!(browse(root.path(), &["--no-open"], "2\n").status.success());
+    let files: Vec<_> = fs::read_dir(root.path().join(".wtflow/flows"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(
+        files
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "yaml"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        files
+            .iter()
+            .filter(|p| p.to_string_lossy().ends_with(".context.json"))
+            .count(),
+        2
+    );
+    assert!(files
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "html"))
+        .any(|p| fs::read_to_string(p).unwrap().contains("Save an order.")));
+}
+
+#[test]
+fn filter_flag_supports_patterns_and_can_be_cleared_in_the_picker() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".wtflow.yaml"), "collapse: false\n").unwrap();
+    fs::write(root.path().join("app.ts"), "@Controller('orders') class App { @Post() create() { send(); } @Get() list() { read(); } }").unwrap();
+    let output = browse(root.path(), &["--filter", "APP.CRE*"], "q\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("1 matches"));
+    assert!(text.contains("http POST /orders"));
+    assert!(!text.contains("http GET /orders"));
+    let output = browse(root.path(), &["--filter", "not-found"], "/\n2\n");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("No matches"));
+    assert!(text.contains("Saved flow:"));
+    let output = Command::new(env!("CARGO_BIN_EXE_wtflow"))
+        .current_dir(root.path())
+        .args(["entrypoints", "--json", "--filter", "GET l?st"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let entries: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["symbol"], "App.list");
+    let inventory: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.path().join(".wtflow/entrypoints.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(inventory.as_array().unwrap().len(), 2);
+}

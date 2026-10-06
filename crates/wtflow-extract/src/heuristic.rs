@@ -28,6 +28,16 @@ pub fn build(
     root: &Path,
 ) -> Result<HeuristicResolver> {
     let mut calls = BTreeMap::new();
+    // Index once instead of scanning every function for every call site.
+    let mut by_name: BTreeMap<&str, BTreeMap<&str, Vec<&Func>>> = BTreeMap::new();
+    for func in funcs.values().flatten() {
+        by_name
+            .entry(&func.name)
+            .or_default()
+            .entry(&func.class)
+            .or_default()
+            .push(func);
+    }
     // Type and import facts only guide target lookup; structural nodes always come from AST.
     let typed = Regex::new(r"(?:this\.|self\.)?(\w+)\s*:\s*([A-Za-z_]\w*)")?;
     let java_field = Regex::new(r"\b([A-Z]\w*)(?:<[^>]*>)?\s+(\w+)\s*[;=,)]")?;
@@ -123,13 +133,23 @@ pub fn build(
                         .unwrap_or_else(|| receiver.into())
                 }
             };
-            let candidates: Vec<_> = funcs
-                .values()
+            let named = by_name.get(method);
+            let candidates: Vec<_> = named
+                .and_then(|classes| classes.get(class.as_str()))
+                .into_iter()
                 .flatten()
-                .filter(|f| {
-                    f.name == *method
-                        && (f.class == class || (parts.len() == 1 && f.class.is_empty()))
-                })
+                .copied()
+                .chain(
+                    named
+                        .and_then(|classes| {
+                            (parts.len() == 1 && !class.is_empty())
+                                .then(|| classes.get(""))
+                                .flatten()
+                        })
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                )
                 .filter(|f| {
                     if f.file == *path {
                         return true;

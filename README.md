@@ -12,7 +12,7 @@ problems such as unreachable steps and errors that get silently ignored.
 ## What you get
 
 - A readable flow document you can keep alongside your code.
-- A diagram you can show in Markdown using Mermaid.
+- An interactive browser view, plus a Mermaid diagram for sharing.
 - Checks that flag possible logic problems and outdated documentation.
 - Your own labels for steps, so a diagram can speak your team's language.
 
@@ -26,15 +26,13 @@ With Rust installed, run this from the wtflow repository:
 make release
 ```
 
-Create a flow from the included reconciliation example, check it, and draw it:
+Browse the included reconciliation example:
 
 ```sh
-./wtflow extract --entry testdata/ts/src/reconciliation/service.ts#ReconciliationService.reconcile -o reconcile.flow.yaml
-./wtflow check reconcile.flow.yaml
-./wtflow render -o reconcile.md reconcile.flow.yaml
+./wtflow flows --dir testdata/ts
 ```
 
-Open `reconcile.md` in a Markdown viewer that supports Mermaid to see the diagram.
+Choose a starting point. wtflow follows internal calls and opens a browser view.
 To use `wtflow` from any project, run this once from the wtflow repository:
 
 ```sh
@@ -44,6 +42,10 @@ make install
 This installs it into `~/.local/bin`. If that folder is not on your PATH, the
 command prints the line to add to your shell settings. Run `make install` again
 whenever you want to install a newer build.
+
+If `make` reports “No rule to make target 'release'”, check that your terminal is
+in the **wtflow repository**. To build and install from any directory, use
+`make -C /path/to/wtflow install`, replacing the path with your wtflow checkout.
 
 Then run `wtflow entrypoints .` in your project to find places to begin.
 The [setup guide and command reference](docs/reference.md) explain how to prepare
@@ -96,20 +98,27 @@ wtflow does not recognize every framework's entry points.
 wtflow flows
 ```
 
-If you have no saved flows yet, choose an entrypoint from the numbered list.
-wtflow analyzes it and saves the flow, diagram, and analysis notes in
-`.wtflow/flows/`. If you already have saved flows, choose one to draw it again,
-or enter `n` to analyze another entrypoint.
+Choose an entrypoint from the list. All starting points stay visible;
+previously analyzed ones are marked **[saved]**.
+wtflow follows its internal calls and opens an interactive view in your browser.
+It saves everything in `.wtflow/flows/`. If you already have saved flows, choose
+one to refresh it from source and open it, or choose any other starting point.
 
-Open the Markdown diagram and follow it from top to bottom. Where are decisions
+Follow the flow from top to bottom. Where are decisions
 made? What can stop the process? Which calls reach another service? Use the source
-locations in the flow YAML to jump back to the code. Review warnings, especially
+references under **Source & details** to find the relevant code. Review analysis notes, especially
 calls wtflow could not follow or calls with several possible destinations.
 
-**4. Follow the interesting parts.** If a service call hides the detail you need,
-create a second flow starting at that method, or re-extract with `--depth 3`.
-Add plain-language step labels with `wtflow label` as you learn what the code
-means. Keep each flow focused on one question, and save the useful ones alongside
+**4. Follow the interesting parts.** Click a section to expand its calls, or use
+**Expand all**. **Overview** collapses the detail again. No depth flags or extra
+commands are needed. External calls, unresolved calls, and recursion remain
+visible; any safety limits are explained in the analysis notes.
+Calls show their return type and existing source documentation when available.
+**For and while loops stand out in orange**, with a **LOOP** heading and a
+**Repeat body** section. Add your own explanation under **Your purpose note**.
+Notes are saved in your browser; **Export notes as labels** downloads a portable
+copy. Apply it with `wtflow label PATH/TO/FLOW.flow.yaml labels.yaml`.
+Keep each flow focused on one question, and save the useful ones alongside
 the project so the next person has a starting point.
 
 ## Browse and draw saved flows
@@ -120,10 +129,32 @@ To see saved flows or create your first one, run:
 wtflow flows
 ```
 
-Choose a number to draw a saved flow, `n` to analyze another entrypoint, or `q`
-to leave. New analyses live in `.wtflow/flows/`: the `.flow.yaml` document, its
-`.flow.md` diagram, and `.flow.lint.txt` notes. Open diagrams in a Markdown viewer
-that supports Mermaid. Use `wtflow flows --dir /path/to/project` for another
+Use **↑ / ↓** to move and **Enter** to open a flow. Just start typing to search
+by route, function, or file. **Page Up / Page Down** scroll through long lists.
+**Esc** clears your search, then leaves the picker. **F2** shows or hides test
+entrypoints. Saved and new starting points appear together in one list.
+
+To start with a smaller list, filter by route, method name, or filename:
+
+```sh
+wtflow flows --filter 'reconcile'
+wtflow flows --filter '*Controller.create*'
+wtflow entrypoints src/ --filter 'POST *orders*'
+```
+
+Search ignores letter case. `*` matches any text, `?` matches one character,
+and space-separated terms must all match. The same patterns work when typing
+in the picker; **Esc** clears the filter.
+
+The project path is shown at the top. Saved flows come from that project's
+`.wtflow/flows/`, `docs/flows/`, and root folder; test goldens are not swept into
+the list. To browse another project from anywhere, use
+`wtflow flows --dir /path/to/project`.
+
+New analyses live in `.wtflow/flows/`: the `.flow.html` browser view, `.flow.yaml`
+document, `.flow.md` Mermaid diagram, and `.flow.lint.txt` notes. The browser view
+works offline, without plugins. Use `--no-open` to save it without launching a
+browser. Use `wtflow flows --dir /path/to/project` for another
 project; existing flows in folders such as `docs/flows` are still recognized.
 
 ## Keep it useful
