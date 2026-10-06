@@ -2,6 +2,8 @@
 use anyhow::{Context, Result};
 use std::{
     collections::BTreeMap,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
     path::Path,
     process::{Command, Stdio},
 };
@@ -18,7 +20,43 @@ struct Job {
     args: Vec<String>,
     lang: Language,
 }
-fn execute(root: &Path, job: &Job, args: &[String], capture: bool) -> Result<String> {
+struct IndexLog {
+    reference: String,
+    file: File,
+}
+impl IndexLog {
+    fn create(root: &Path) -> Result<Self> {
+        fs::create_dir_all(root.join(".wtflow/logs"))?;
+        for number in 1..=u64::MAX {
+            let reference = format!(".wtflow/logs/index-{number:06}.log");
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(root.join(&reference))
+            {
+                Ok(file) => return Ok(Self { reference, file }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error).context("create index log"),
+            }
+        }
+        anyhow::bail!("no available index log number")
+    }
+}
+fn execute(
+    root: &Path,
+    job: &Job,
+    args: &[String],
+    capture: bool,
+    log: &mut IndexLog,
+) -> Result<String> {
+    writeln!(
+        log.file,
+        "\n$ {} {} {}",
+        job.program,
+        job.prefix.join(" "),
+        args.join(" ")
+    )?;
+    log.file.flush()?;
     let mut command = Command::new(job.program);
     command.current_dir(root).args(&job.prefix).args(args);
     if capture {
@@ -28,6 +66,8 @@ fn execute(root: &Path, job: &Job, args: &[String], capture: bool) -> Result<Str
                 job.program, job.name
             )
         })?;
+        log.file.write_all(&result.stdout)?;
+        log.file.write_all(&result.stderr)?;
         anyhow::ensure!(
             result.status.success(),
             "{} failed: {}; Docker alternative: {DOCKER}",
@@ -37,8 +77,8 @@ fn execute(root: &Path, job: &Job, args: &[String], capture: bool) -> Result<Str
         Ok(String::from_utf8(result.stdout)?.trim().to_owned())
     } else {
         let status = command
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::from(log.file.try_clone()?))
+            .stderr(Stdio::from(log.file.try_clone()?))
             .status()
             .with_context(|| {
                 format!(
@@ -54,10 +94,30 @@ fn execute(root: &Path, job: &Job, args: &[String], capture: bool) -> Result<Str
         Ok(String::new())
     }
 }
-pub fn run(langs: &[String], force: bool) -> Result<()> {
+pub fn run(langs: &[String], force: bool, show_progress: bool) -> Result<()> {
     let config = RepositoryConfig::discover(&std::env::current_dir()?)?;
+    let mut log = IndexLog::create(&config.root)?;
+    let result = run_logged(&config, langs, force, show_progress, &mut log);
+    let saved = match &result {
+        Ok(()) => writeln!(log.file, "\nResult: success"),
+        Err(error) => writeln!(log.file, "\nResult: failed\n{error:#}"),
+    }
+    .and_then(|()| log.file.sync_all());
+    eprintln!("Index log: {} (relative to project root)", log.reference);
+    saved.context("finish index log")?;
+    result
+}
+fn run_logged(
+    config: &RepositoryConfig,
+    langs: &[String],
+    force: bool,
+    show_progress: bool,
+    log: &mut IndexLog,
+) -> Result<()> {
+    let mut progress =
+        crate::progress::Progress::start(show_progress, "Preparing project index...");
     let root = &config.root;
-    let files = source::load(root)?;
+    let files = source::paths(root)?;
     let mut jobs = vec![];
     for (lang, short, name, setting) in [
         (
@@ -85,7 +145,10 @@ pub fn run(langs: &[String], force: bool) -> Result<()> {
         if !langs.is_empty() && !langs.iter().any(|s| s == short || s == name) {
             continue;
         }
-        if !files.values().any(|f| f.lang == lang) {
+        if !files
+            .iter()
+            .any(|file| Language::from_path(file) == Some(lang))
+        {
             continue;
         }
         let output = format!(".wtflow/index/{name}.scip");
@@ -123,9 +186,19 @@ pub fn run(langs: &[String], force: bool) -> Result<()> {
     anyhow::ensure!(!jobs.is_empty(),"no enabled indexers for languages present in this repository; configure .wtflow.yaml index");
     let mut meta = Metadata::load(root)?.unwrap_or_default();
     let mut selected = BTreeMap::new();
-    for (path, file) in &files {
-        if jobs.iter().any(|j| j.lang == file.lang) {
-            selected.insert(path.clone(), hash(file.text.as_bytes()));
+    for path in &files {
+        if jobs
+            .iter()
+            .any(|j| Some(j.lang) == Language::from_path(path))
+        {
+            let bytes = fs::read(path)
+                .with_context(|| format!("{}:1: read for indexing", path.display()))?;
+            selected.insert(
+                path.strip_prefix(root)?
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                hash(&bytes),
+            );
         }
     }
     if !force
@@ -135,13 +208,18 @@ pub fn run(langs: &[String], force: bool) -> Result<()> {
                 .is_file()
         })
     {
+        progress.finish();
+        writeln!(log.file, "Index is up to date; no indexers were run.")?;
         eprintln!("index is up to date");
         return Ok(());
     }
     std::fs::create_dir_all(root.join(".wtflow/index"))?;
+    progress.finish();
     for job in &jobs {
-        let version = execute(root, job, &["--version".into()], true)?;
-        execute(root, job, &job.args, false)?;
+        let _progress =
+            crate::progress::Progress::start(show_progress, &format!("Indexing {}...", job.name));
+        let version = execute(root, job, &["--version".into()], true, log)?;
+        execute(root, job, &job.args, false, log)?;
         anyhow::ensure!(
             root.join(format!(".wtflow/index/{}.scip", job.name))
                 .metadata()

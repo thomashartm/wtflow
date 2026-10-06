@@ -7,14 +7,21 @@ use std::{
 };
 use wtflow_core::{labels, lint, yaml, Flow};
 use wtflow_extract::Cx;
+mod flows;
 mod index;
+mod init;
+mod progress;
+use progress::Progress;
 #[derive(Parser)]
 #[command(
     name = "wtflow",
     version,
-    about = "What the flow? Deterministic source-derived flow documents."
+    about = "What the flow? Turn code into readable flows and diagrams."
 )]
 struct Cli {
+    /// Hide the terminal activity indicator
+    #[arg(long, global = true)]
+    no_progress: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -31,82 +38,136 @@ enum Language {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Browse saved flows, or analyze an entrypoint and save its diagram
+    Flows {
+        /// Project or directory to browse; includes the project's .wtflow/flows store
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Create a project configuration by answering a few questions
+    Init {
+        /// Directory for .wtflow.yaml (defaults to the current directory)
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Build or refresh the project index to follow calls between files
     Index {
+        /// Languages to index, separated by commas: ts, java, py
         #[arg(long, value_delimiter = ',')]
         lang: Vec<String>,
+        /// Rebuild indexes even when source files have not changed
         #[arg(long)]
         force: bool,
     },
+    /// Find routes, event handlers, and other places where a flow begins
     Entrypoints {
+        /// Print entries as JSON
         #[arg(long)]
         json: bool,
+        /// Directory to search
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
+    /// Create a flow document from a function, method, or Camel route
     Extract {
+        /// Starting point as FILE#SYMBOL, for example src/service.ts#Service.run
         #[arg(long)]
         entry: String,
+        /// Name for the flow document
         #[arg(long)]
         name: Option<String>,
+        /// How many levels of calls to expand into the flow
         #[arg(long, default_value_t = 2)]
         depth: usize,
+        /// How to follow calls: auto prefers indexes, scip requires an index, heuristic uses syntax
         #[arg(long, value_enum, default_value = "auto")]
         resolver: ResolverMode,
+        /// Keep labels from an existing flow where the step ID and code are unchanged
         #[arg(long)]
         merge: Option<PathBuf>,
+        /// Write the flow to a file instead of standard output
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
     },
+    /// Refresh flow documents from source and keep labels on unchanged steps
     Update {
+        /// Flow YAML files to refresh
         #[arg(required = true)]
         flows: Vec<PathBuf>,
     },
+    /// List flow steps that still need a human-readable label
     Todo {
+        /// Flow YAML file to inspect
         flow: PathBuf,
+        /// Include steps that already have labels
         #[arg(long)]
         all: bool,
+        /// Print steps as JSON
         #[arg(long)]
         json: bool,
+        /// Include callee documentation, neighboring steps, and glossary; requires --json
         #[arg(long, requires = "json")]
         context: bool,
     },
+    /// Apply your own step labels without changing the flow structure
     Label {
+        /// Flow YAML file to update
         flow: PathBuf,
+        /// YAML file mapping step IDs to labels, or - to read standard input
         labels: String,
     },
+    /// Check flows for logic problems and unwanted structural edits
     Check {
+        /// Treat warnings as failures
         #[arg(long)]
         strict: bool,
+        /// Also check for source changes and stale indexes
         #[arg(long)]
         source: bool,
+        /// List individual unresolved calls
         #[arg(long)]
         verbose: bool,
+        /// Flow YAML files to check
         #[arg(required = true)]
         flows: Vec<PathBuf>,
     },
+    /// Draw a flow as a Mermaid diagram or Markdown document
     Render {
+        /// Flow YAML file to draw
         flow: PathBuf,
+        /// Language for diagram connectors: en (English) or de (German)
         #[arg(long, value_enum, default_value = "en")]
         lang: Language,
+        /// Show source code alongside labels
         #[arg(long)]
         detail: bool,
+        /// Output file (.mmd or .md); omit to print Mermaid to standard output
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
     },
+    /// Print the schema describing valid flow or configuration files
     Schema {
+        /// Print the schema as JSON instead of YAML
         #[arg(long)]
         json: bool,
+        /// Print the project configuration schema instead of the flow schema
         #[arg(long)]
         config: bool,
     },
+    /// Show how wtflow parses a source file (development aid)
     DebugAst {
+        /// Source file to inspect
         file: PathBuf,
+        /// Limit the tree to L:C-L:C using one-based lines and UTF-8 byte columns
         #[arg(long)]
         range: Option<String>,
     },
+    /// Show which definition a call points to (development aid)
     DebugResolve {
+        /// Call position as FILE:LINE:COL using one-based lines and UTF-8 byte columns
         position: String,
     },
+    /// Print the installed wtflow version
     Version,
 }
 fn read(path: &Path) -> Result<String> {
@@ -198,9 +259,12 @@ fn point(text: &str, value: &str) -> Result<usize> {
 }
 fn run() -> Result<i32> {
     let cli = Cli::parse();
+    let show_progress = progress::enabled(cli.no_progress);
     wtflow_core::schema::initialize()?;
     match cli.command {
-        Command::Index { lang, force } => index::run(&lang, force)?,
+        Command::Flows { dir } => flows::run(&dir, show_progress)?,
+        Command::Init { dir } => init::run(&dir)?,
+        Command::Index { lang, force } => index::run(&lang, force, show_progress)?,
         Command::Version => println!("wtflow {}", env!("CARGO_PKG_VERSION")),
         Command::Schema { json, config } => {
             if json {
@@ -220,8 +284,14 @@ fn run() -> Result<i32> {
             }
         }
         Command::Entrypoints { dir, json } => {
-            let cx = Cx::load(&dir)?;
+            let mut progress = Progress::start(show_progress, "Finding entrypoints...");
+            let (cx, warnings) = Cx::load_entrypoints(&dir)?;
             let entries = cx.entrypoints();
+            flows::save_entries(&cx.config.root, &entries)?;
+            progress.finish();
+            for warning in warnings {
+                eprintln!("warning: {warning}");
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&entries)?);
             } else {
@@ -238,6 +308,7 @@ fn run() -> Result<i32> {
             merge,
             output,
         } => {
+            let mut progress = Progress::start(show_progress, "Extracting flow...");
             let (path, symbol) = entry
                 .rsplit_once('#')
                 .context("--entry must be FILE#SYMBOL")?;
@@ -253,13 +324,16 @@ fn run() -> Result<i32> {
                 .to_string_lossy()
                 .replace('\\', "/");
             let mut flow = cx.extract(&relative, symbol, name.as_deref(), depth)?;
-            for file in cx.stale_for(&flow) {
-                eprintln!("warning W120 - stale index for {file}");
-            }
+            let stale = cx.stale_for(&flow);
             if let Some(old) = merge {
                 labels::carry(&load(&old)?, &mut flow)?;
             }
-            write(output.as_deref(), &yaml::emit(&flow)?)?;
+            let text = yaml::emit(&flow)?;
+            progress.finish();
+            for file in stale {
+                eprintln!("warning W120 - stale index for {file}");
+            }
+            write(output.as_deref(), &text)?;
         }
         Command::Label {
             flow,
@@ -287,16 +361,18 @@ fn run() -> Result<i32> {
             let f = load(&flow)?;
             f.verify_fingerprint()?;
             if context {
+                let mut progress = Progress::start(show_progress, "Gathering step context...");
                 let entry = locate(&flow, &f)?;
                 let mut cx = Cx::load(&entry)?;
                 cx.enable_scip(false)?;
-                for file in cx.stale_for(&f) {
+                let stale = cx.stale_for(&f);
+                let text =
+                    serde_json::to_string_pretty(&wtflow_extract::context::packets(&cx, &f, all)?)?;
+                progress.finish();
+                for file in stale {
                     eprintln!("warning W120 - stale index for {file}");
                 }
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&wtflow_extract::context::packets(&cx, &f, all)?)?
-                );
+                println!("{text}");
                 return Ok(0);
             }
             let todo = labels::todo(&f, all);
@@ -317,15 +393,17 @@ fn run() -> Result<i32> {
         Command::Update { flows } => {
             let mut updates = vec![];
             for path in flows {
+                let mut progress = Progress::start(show_progress, "Updating flow...");
                 let old = load(&path)?;
                 old.verify_fingerprint()?;
                 let (mut new, stale) = reextract(&path, &old)?;
-                for file in stale {
-                    eprintln!("warning W120 - stale index for {file}");
-                }
                 let changed = new.fingerprint != old.fingerprint;
                 let kept = labels::carry(&old, &mut new)?;
                 updates.push((path, yaml::emit(&new)?, changed, kept));
+                progress.finish();
+                for file in stale {
+                    eprintln!("warning W120 - stale index for {file}");
+                }
             }
             for (path, text, changed, kept) in updates {
                 write(Some(&path), &text)?;
@@ -340,6 +418,7 @@ fn run() -> Result<i32> {
         } => {
             let mut failed = false;
             for path in flows {
+                let mut progress = Progress::start(show_progress, "Checking flow...");
                 let text = read(&path)?;
                 let mut context = lint::Context {
                     verbose,
@@ -378,6 +457,7 @@ fn run() -> Result<i32> {
                 }
                 let diagnostics = lint::document(&text, &path.display().to_string(), &context);
                 failed |= lint::fails(&diagnostics, strict);
+                progress.finish();
                 for d in diagnostics {
                     println!("{d}");
                 }
@@ -390,6 +470,7 @@ fn run() -> Result<i32> {
             detail,
             output,
         } => {
+            let mut progress = Progress::start(show_progress, "Rendering diagram...");
             let f = load(&flow)?;
             f.verify_fingerprint()?;
             let options = wtflow_render::Options {
@@ -409,9 +490,11 @@ fn run() -> Result<i32> {
             } else {
                 graph
             };
+            progress.finish();
             write(output.as_deref(), &text)?;
         }
         Command::DebugAst { file, range } => {
+            let mut progress = Progress::start(show_progress, "Parsing source...");
             let text = read(&file)?;
             let source =
                 wtflow_extract::source::SourceFile::parse(file.to_string_lossy().into(), text)?;
@@ -443,9 +526,11 @@ fn run() -> Result<i32> {
                     dump(c, f, depth + 1);
                 }
             }
+            progress.finish();
             dump(node, &source, 0);
         }
         Command::DebugResolve { position } => {
+            let mut progress = Progress::start(show_progress, "Resolving call...");
             let (fileline, col) = position
                 .rsplit_once(':')
                 .context("position must be FILE:LINE:COL")?;
@@ -473,7 +558,9 @@ fn run() -> Result<i32> {
                     end: n.end_byte(),
                 },
             );
-            println!("{}", serde_json::to_string_pretty(&resolution)?);
+            let text = serde_json::to_string_pretty(&resolution)?;
+            progress.finish();
+            println!("{text}");
         }
     }
     Ok(0)

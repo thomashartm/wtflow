@@ -11,6 +11,7 @@ clap.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 tree-sitter.workspace = true
+walkdir.workspace = true
 wtflow-core = {path = "../wtflow-core"}
 wtflow-extract = {path = "../wtflow-extract"}
 wtflow-render = {path = "../wtflow-render"}

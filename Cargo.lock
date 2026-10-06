@@ -1709,6 +1709,7 @@ dependencies = [
  "serde_yaml_ng",
  "tempfile",
  "tree-sitter",
+ "walkdir",
  "wtflow-core",
  "wtflow-extract",
  "wtflow-render",

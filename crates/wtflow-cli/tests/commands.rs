@@ -39,6 +39,103 @@ fn fixture() -> tempfile::TempDir {
     dir
 }
 #[test]
+fn entrypoints_respect_requested_directory_and_keep_repository_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".wtflow.yaml"), "collapse: true\n").unwrap();
+    for folder in ["src/nested", "src-other", "unrelated"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+    }
+    let controller =
+        "@Controller('orders')\nexport class OrdersController { @Post() create() {} }\n";
+    for file in [
+        "src/orders.ts",
+        "src/nested/orders.ts",
+        "src-other/orders.ts",
+    ] {
+        std::fs::write(dir.path().join(file), controller).unwrap();
+    }
+    std::fs::write(dir.path().join("unrelated/broken.ts"), "function {").unwrap();
+    let output = ok(dir.path(), &["entrypoints", "--json", "src/"]);
+    let entries: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let files: Vec<_> = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(files, ["src/nested/orders.ts", "src/orders.ts"]);
+    let cached: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".wtflow/entrypoints.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cached, entries);
+    assert_eq!(output, ok(dir.path(), &["entrypoints", "--json", "src/"]));
+    assert_eq!(
+        output,
+        ok(
+            dir.path(),
+            &["entrypoints", "--no-progress", "--json", "src/"]
+        )
+    );
+    assert!(run(dir.path(), &["entrypoints", "--json", "src/"])
+        .stderr
+        .is_empty());
+    // Discovery reports skipped files without losing entries in valid files.
+    let all = run(dir.path(), &["entrypoints", "--json", "."]);
+    assert!(all.status.success());
+    assert!(String::from_utf8_lossy(&all.stderr).contains("unrelated/broken.ts"));
+    assert!(
+        String::from_utf8_lossy(&all.stderr).contains("entrypoints from this file were skipped")
+    );
+    let entries: serde_json::Value = serde_json::from_slice(&all.stdout).unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 3);
+    // Extraction remains strict about syntax errors, so flows are not silently incomplete.
+    assert!(wtflow_extract::Cx::load(&dir.path().join("src/orders.ts")).is_err());
+}
+
+#[test]
+fn source_scans_skip_build_output_and_typescript_declarations() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".wtflow.yaml"), "collapse: true\n").unwrap();
+    for folder in ["src/types", "dist/nested", "build"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("src/orders.ts"),
+        "@Controller('orders')\nexport class OrdersController { @Post() create() { send(); } }\n",
+    )
+    .unwrap();
+    // Generated NestJS declarations can contain syntax unsupported by the grammar.
+    let declaration = "declare const Base: import(\"@nestjs/common\").Type<Partial<Input>>;\n";
+    std::fs::write(dir.path().join("src/types/orders.d.ts"), declaration).unwrap();
+    std::fs::write(dir.path().join("dist/nested/orders.d.ts"), declaration).unwrap();
+    for file in ["dist/broken.ts", "build/broken.ts"] {
+        std::fs::write(dir.path().join(file), "function {").unwrap();
+    }
+    let entries: serde_json::Value =
+        serde_json::from_str(&ok(dir.path(), &["entrypoints", "--json", "."])).unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["file"], "src/orders.ts");
+    let cx = wtflow_extract::Cx::load(&dir.path().join("src/orders.ts")).unwrap();
+    assert_eq!(
+        cx.files.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["src/orders.ts"]
+    );
+    let output = ok(
+        dir.path(),
+        &[
+            "extract",
+            "--entry",
+            "src/orders.ts#OrdersController.create",
+            "--resolver",
+            "heuristic",
+        ],
+    );
+    let flow = wtflow_core::yaml::load(&output, "test").unwrap();
+    assert_eq!(flow.entry.file, "src/orders.ts");
+}
+
+#[test]
 fn labels_preserve_fingerprint_and_unknown_ids_are_atomic() {
     let dir = fixture();
     let path = dir.path().join("docs/run.flow.yaml");

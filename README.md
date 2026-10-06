@@ -1,98 +1,143 @@
 # wtflow — What the flow?
 
-A Rust CLI for deterministic source-derived flow documents, lint, and Mermaid.
-SCIP provides call resolution and tree-sitter provides control flow. Labels may
-be edited separately; structural changes require extraction. No LLM calls.
+**Turn code into a flow you can read, discuss, and keep up to date.**
 
-Requires Rust 1.80 or newer to build. The repository toolchain pins 1.80.1 so the
-minimum supported version is tested directly. Build with `cargo build --locked`;
-run `cargo test --workspace --locked` and `cargo clippy --workspace --all-targets
---locked -- -D warnings`.
+Pick a function. wtflow follows its steps, branches, and calls, then creates a
+flow document and diagram. It works with TypeScript, Python, and Java, including
+Apache Camel routes.
 
-Implementation proceeds through the acceptance gates in [MILESTONES.md](MILESTONES.md).
-The CLI supports heuristic extraction, checks and rendering. Dependency versions and Cargo.lock are committed.
-When refreshing the lockfile, use modern Cargo with
-`--config 'resolver.incompatible-rust-versions="fallback"'`, then verify on 1.80.1.
+Use it to understand unfamiliar code, explain a process to your team, or spot
+problems such as unreachable steps and errors that get silently ignored.
 
-## Format
+## What you get
 
-Schemas live in `schema/`. YAML is emitted by a handwritten canonical emitter.
-Empty lists use `[]`; other sequences use block notation, except aggregate state
-and boundaries. Fingerprints hash structural fields only. Labels and source line
-locations do not affect the fingerprint.
+- A readable flow document you can keep alongside your code.
+- A diagram you can show in Markdown using Mermaid.
+- Checks that flag possible logic problems and outdated documentation.
+- Your own labels for steps, so a diagram can speak your team's language.
 
-## Limits
+wtflow reads your code without running it. It does not send it to an AI service.
 
-Static analysis cannot recover arbitrary runtime dependency injection (custom
-providers or CDI qualifiers), dynamic calls, nested I/O inside call arguments,
-or implicit exception propagation. A SCIP index must be fresh for every entry
-or inlined file. Stale files fall back to heuristics and must be reported.
+## Try it
 
-No Go reference was available at bootstrap; see [PARITY.md](PARITY.md).
+With Rust installed, run this from the wtflow repository:
 
-## Usage
-
-```
-wtflow entrypoints testdata/ts
-wtflow extract --entry testdata/ts/src/reconciliation/service.ts#ReconciliationService.reconcile --resolver heuristic -o docs/reconcile.flow.yaml
-wtflow check --source docs/reconcile.flow.yaml
-wtflow todo --json docs/reconcile.flow.yaml
-wtflow label docs/reconcile.flow.yaml labels.yaml
-wtflow update docs/reconcile.flow.yaml
-wtflow render --lang en -o docs/reconcile.mmd docs/reconcile.flow.yaml
-wtflow schema --json
+```sh
+make release
 ```
 
-Run source checks from the source repository or keep flow files beneath its root.
-`label` refuses edited structure and unknown IDs without changing the file.
-Output writes replace files atomically. Exit codes: 0 success, 1 lint failure,
-2 usage or I/O failure. `check --strict` also fails on warnings.
+Create a flow from the included reconciliation example, check it, and draw it:
 
-## Indexing and resolution
-
-Enable the desired languages in `.wtflow.yaml`, install project dependencies,
-then run `wtflow index`. `--lang ts,java,py` selects languages and `--force`
-rebuilds unchanged indexes. TypeScript/Python use Node and their official npm
-indexers; Java requires scip-java, a JDK and a working Gradle or Maven build.
-These tools are used only by `index`. The resulting `*.scip` files and `meta.yaml`
-can be committed so extraction and tests work without them.
-
-Prefer `--resolver auto`: SCIP answers first and heuristics handle unresolved or
-stale files. `--resolver scip` requires an index; freshness fallback still applies.
-`--resolver heuristic` is useful for reference comparisons. W120 identifies
-stale entry/inlined files; `check --source` treats it as an error. The header
-records `scip`, `heuristic`, or `mixed`, and SCIP-resolved nodes carry symbols.
-Use `debug-resolve FILE:LINE:COL` to inspect a one-based UTF-8 byte position.
-
-Build the local indexer image with:
-
-```
-docker build -f docker/indexers.Dockerfile -t wtflow-indexers:local .
-docker run --rm -v "$PWD:/src" wtflow-indexers:local wtflow index
+```sh
+./wtflow extract --entry testdata/ts/src/reconciliation/service.ts#ReconciliationService.reconcile -o reconcile.flow.yaml
+./wtflow check reconcile.flow.yaml
+./wtflow render -o reconcile.md reconcile.flow.yaml
 ```
 
-The suggested `ghcr.io/aderiserp/wtflow-indexers` name is a publication target;
-this repository does not publish it automatically. Python projects can supply
-an indexer `--environment environment.json` argument to avoid environment
-introspection through pip, as the committed fixture does.
+Open `reconcile.md` in a Markdown viewer that supports Mermaid to see the diagram.
+To use `wtflow` from any project, run this once from the wtflow repository:
 
-## Automation
+```sh
+make install
+```
 
-CI runs formatting, clippy, tests on the MSRV and stable, deterministic golden
-checks, Docker Mermaid syntax checks, and release builds for Linux x86_64/arm64
-(musl) and macOS x86_64/arm64. Artifacts are uploaded to the workflow run; no
-release or container is published automatically. The [consumer example](examples/consumer-workflow.yml)
-shows index refresh, source validation and render-diff checks; adapt its tool
-installation prerequisite to your repository.
+This installs it into `~/.local/bin`. If that folder is not on your PATH, the
+command prints the line to add to your shell settings. Run `make install` again
+whenever you want to install a newer build.
 
-Use the [flow-docs skill](skills/flow-docs/SKILL.md) for assisted documentation.
-Local performance measurements and their scope are in [docs/performance.md](docs/performance.md).
+Then run `wtflow entrypoints .` in your project to find places to begin.
+The [setup guide and command reference](docs/reference.md) explain how to prepare
+your project so wtflow can follow calls between files.
 
-## Labeling context hooks
+## Making sense of a TypeScript project
 
-`wtflow todo --json --context FLOW.flow.yaml` emits node context, available SCIP
-callee signatures/documentation, ancestor IDs and adjacent sibling IDs. It loads
-an optional `glossary.yaml` from the repository root and includes it in each
-packet. `--all` includes labeled nodes. This command is offline and does not
-modify the flow. See the [labels.cache design](docs/labels-cache.md); no cache
-storage or LLM integration is implemented.
+Start with one question, such as **“What happens when someone places an order?”**
+A small flow is easier to understand than a diagram of the whole application.
+With `wtflow` installed, open a terminal in the project's root folder.
+
+**1. Prepare the project.** Install its dependencies using its usual package
+manager (`npm ci` for an npm project with a lockfile). Then let wtflow guide you
+through setup:
+
+```sh
+wtflow init
+```
+
+It asks which languages to follow, who owns the project, and whether individual
+folders have different owners. Press Enter to accept a suggestion. It creates
+`.wtflow.yaml`; an existing config is left untouched. To set up another folder,
+use `wtflow init --dir /path/to/project`.
+
+Choose TypeScript, then build the project's code index:
+
+```sh
+wtflow index --lang ts
+```
+
+This needs Node.js and `npx`. It builds a map of the project's code so wtflow can
+follow calls between files more accurately. A spinner shows that indexing is
+running. Its detailed output goes into `.wtflow/logs/`, and the command prints
+the log reference when it finishes, including when something goes wrong.
+
+**2. Find where the action starts.** List the routes and handlers wtflow recognizes:
+
+```sh
+wtflow entrypoints .
+```
+
+Look for the route or event related to your question. For placing an order, that
+might be `POST /orders`. The list is saved in `.wtflow/entrypoints.json`. If nothing
+is listed, find the relevant function or class method in the code yourself;
+wtflow does not recognize every framework's entry points.
+
+**3. Analyze and draw that one flow.** Run:
+
+```sh
+wtflow flows
+```
+
+If you have no saved flows yet, choose an entrypoint from the numbered list.
+wtflow analyzes it and saves the flow, diagram, and analysis notes in
+`.wtflow/flows/`. If you already have saved flows, choose one to draw it again,
+or enter `n` to analyze another entrypoint.
+
+Open the Markdown diagram and follow it from top to bottom. Where are decisions
+made? What can stop the process? Which calls reach another service? Use the source
+locations in the flow YAML to jump back to the code. Review warnings, especially
+calls wtflow could not follow or calls with several possible destinations.
+
+**4. Follow the interesting parts.** If a service call hides the detail you need,
+create a second flow starting at that method, or re-extract with `--depth 3`.
+Add plain-language step labels with `wtflow label` as you learn what the code
+means. Keep each flow focused on one question, and save the useful ones alongside
+the project so the next person has a starting point.
+
+## Browse and draw saved flows
+
+To see saved flows or create your first one, run:
+
+```sh
+wtflow flows
+```
+
+Choose a number to draw a saved flow, `n` to analyze another entrypoint, or `q`
+to leave. New analyses live in `.wtflow/flows/`: the `.flow.yaml` document, its
+`.flow.md` diagram, and `.flow.lint.txt` notes. Open diagrams in a Markdown viewer
+that supports Mermaid. Use `wtflow flows --dir /path/to/project` for another
+project; existing flows in folders such as `docs/flows` are still recognized.
+
+## Keep it useful
+
+After changing your code, refresh the project index with `wtflow index`, then run
+`wtflow update` on your flow file. Labels stay attached to unchanged steps.
+Use `wtflow label` to add your own wording; change the code to change the flow.
+
+A diagram is a guide, not a record of a running program. Calls chosen at runtime
+may be missed or have several possible destinations. Keep the index fresh and
+review warnings before relying on a flow.
+
+## Go further
+
+- [Setup, commands, and known limits](docs/reference.md)
+- [Build releases with the Makefile](docs/reference.md#automation)
+- [Use wtflow with a coding assistant](skills/flow-docs/SKILL.md)

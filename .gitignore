@@ -1,4 +1,7 @@
 /target/
+/dist/
+/wtflow
+**/.wtflow/logs/
 **/node_modules/
 **/.gradle/
 **/__pycache__/

@@ -38,7 +38,7 @@ jobs:
       - run: rustup toolchain install 1.80.1 --profile minimal --target ${{ matrix.target }}
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo +1.80.1 build --release --locked -p wtflow-cli --target ${{ matrix.target }}
+      - run: make release TARGET=${{ matrix.target }}
       - run: target/${{ matrix.target }}/release/wtflow version
       - uses: actions/upload-artifact@v4
         with:

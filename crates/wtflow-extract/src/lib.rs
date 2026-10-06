@@ -66,6 +66,21 @@ impl Cx {
     pub fn load(entry: &Path) -> Result<Self> {
         let config = config::RepositoryConfig::discover(entry)?;
         let files = source::load(&config.root)?;
+        Self::from_files(config, files)
+    }
+    /// Discover configuration upwards, but scan entrypoints only under `directory`.
+    pub fn load_entrypoints(directory: &Path) -> Result<(Self, Vec<String>)> {
+        let directory = directory
+            .canonicalize()
+            .with_context(|| format!("{}:1: entrypoint directory", directory.display()))?;
+        let config = config::RepositoryConfig::discover(&directory)?;
+        let (files, warnings) = source::discover_under(&config.root, &directory)?;
+        Ok((Self::from_files(config, files)?, warnings))
+    }
+    fn from_files(
+        config: config::RepositoryConfig,
+        files: BTreeMap<String, SourceFile>,
+    ) -> Result<Self> {
         let funcs = files
             .iter()
             .map(|(path, f)| (path.clone(), functions::collect(f)))
