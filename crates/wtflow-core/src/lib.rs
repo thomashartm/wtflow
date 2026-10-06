@@ -226,3 +226,4 @@ pub fn visit<'a>(nodes: &'a [Node], out: &mut Vec<&'a Node>) {
         }
     }
 }
+pub mod lint;

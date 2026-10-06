@@ -1,0 +1,34 @@
+---
+source: crates/wtflow-render/tests/render.rs
+expression: text
+---
+---
+title: sample
+---
+flowchart TD
+  start(["Start"])
+  finish(["Finish"])
+  start --> n1
+  n1{{"items"}}
+  n1 -->|"next"| n2
+  n2{"a #lt; b"}
+  n2 -->|"yes"| n3
+  n3["continue"]
+  n2 -->|"no"| n4
+  n4["break"]
+  n3 --> n1
+  n1 -->|"done"| n5
+  n4 --> n5
+  subgraph n5["helper"]
+    n6(["return result"]):::k_term
+  end
+  n6 --> n7
+  n7[["storage: Save<br/>save(#quot;x#quot;)<br/>✎ item"]]:::k_call
+  n7 --> n8
+  n8(["return done"]):::k_term
+  n9["unreachable()"]
+  n9 --> finish
+  classDef k_call fill:#e8f0ff,stroke:#4b6cb7
+  classDef k_emit fill:#e5f5e0,stroke:#4a8a3b
+  classDef k_fail fill:#ffe4e4,stroke:#b33
+  classDef k_term fill:#eee,stroke:#666

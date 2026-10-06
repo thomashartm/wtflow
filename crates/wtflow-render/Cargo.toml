@@ -9,3 +9,6 @@ license.workspace = true
 anyhow.workspace = true
 
 wtflow-core = { path = "../wtflow-core" }
+
+[dev-dependencies]
+insta.workspace = true

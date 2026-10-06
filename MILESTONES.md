@@ -30,3 +30,16 @@ fingerprint JSON, label/source invariance, invalid kind/child-list rejection,
 strict config validation, scalar quoting, multiline code and ID uniqueness.
 `cargo test --workspace --locked`, formatting, and clippy with warnings denied
 pass using Rust 1.80.1 on macOS arm64. No prototype parity is claimed.
+
+### M2
+
+Implemented lint diagnostics E000-E006, W101-W107/W110/W112/W113/W120, and
+I001/I002, including severity/document-order sorting and strict/source modes.
+The source/index status is supplied by the caller until M4/M5 wire live checks.
+Mermaid supports all 15 kinds, localized edges, safe text, branch frontiers,
+loop break/continue, switch fallthrough, group-local returns, try cleanup and
+transaction styling. Three reviewed insta snapshots cover these combinations.
+
+Acceptance: 15 tests pass across the workspace, including every diagnostic code;
+formatting and clippy with warnings denied pass on Rust 1.80.1. Mermaid syntax
+validation via Docker remains the explicit M8 gate.
