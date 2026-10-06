@@ -1,0 +1,659 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: "object"
+description: "wtflow v1 deterministic flow document."
+additionalProperties: false
+properties:
+  flow:
+    type: "string"
+    description: "Flow name."
+    minLength: 1
+  version:
+    type: "integer"
+    const: 1
+    description: "Format version."
+  owner:
+    type: "string"
+    description: "Owning module."
+  trigger:
+    type: "string"
+    description: "Entrypoint trigger."
+  entry:
+    type: "object"
+    description: "Extraction parameters."
+    additionalProperties: false
+    properties:
+      lang:
+        type: "string"
+        description: "Source language."
+        enum:
+          - "typescript"
+          - "python"
+          - "java"
+      file:
+        type: "string"
+        description: "Repository-relative path, with forward slashes."
+        pattern: "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+      symbol:
+        type: "string"
+        description: "Entry function, method, or route."
+      depth:
+        type: "integer"
+        minimum: 0
+        description: "Maximum inline depth."
+    required:
+      - "lang"
+      - "file"
+      - "symbol"
+      - "depth"
+  resolution:
+    type: "string"
+    description: "Resolver provenance."
+    enum:
+      - "scip"
+      - "heuristic"
+      - "mixed"
+  fingerprint:
+    type: "string"
+    description: "First eight bytes of the structural SHA-256 digest."
+    pattern: "^[0-9a-f]{16}$"
+  inputs:
+    type: "array"
+    description: "Function inputs."
+    items:
+      type: "object"
+      description: "Input parameter."
+      additionalProperties: false
+      properties:
+        name:
+          type: "string"
+          description: "Parameter name."
+        type:
+          type: "string"
+          description: "Source type."
+      required:
+        - "name"
+        - "type"
+  output:
+    type: "string"
+    description: "Function return type."
+  state:
+    type: "object"
+    description: "Aggregated state access."
+    additionalProperties: false
+    properties:
+      reads:
+        type: "array"
+        description: "Sorted state reads."
+        items:
+          type: "string"
+          description: "A value."
+      writes:
+        type: "array"
+        description: "Sorted state writes."
+        items:
+          type: "string"
+          description: "A value."
+    required:
+      - "reads"
+      - "writes"
+  boundaries:
+    type: "array"
+    description: "Sorted foreign boundaries."
+    items:
+      type: "string"
+      description: "A value."
+  steps:
+    type: "array"
+    description: "Ordered flow body."
+    items:
+      $ref: "#/$defs/node"
+      description: "A structural flow node."
+required:
+  - "flow"
+  - "version"
+  - "entry"
+  - "resolution"
+  - "fingerprint"
+  - "steps"
+$defs:
+  node:
+    type: "object"
+    description: "A node whose structure is determined by the AST."
+    additionalProperties: false
+    properties:
+      id:
+        type: "string"
+        description: "Unique stable identifier."
+        minLength: 1
+      kind:
+        type: "string"
+        description: "Closed structural kind."
+        enum:
+          - "do"
+          - "call"
+          - "emit"
+          - "wait"
+          - "group"
+          - "if"
+          - "switch"
+          - "for_each"
+          - "while"
+          - "parallel"
+          - "try"
+          - "return"
+          - "fail"
+          - "break"
+          - "continue"
+      label:
+        type: "string"
+        description: "Human-authored display text."
+      code:
+        type: "string"
+        description: "Normalized source code; only collapsed do nodes may contain newlines."
+      src:
+        type: "string"
+        description: "Repository-relative source file and one-based line span."
+      target:
+        type: "string"
+        description: "Callee display name."
+      symbol:
+        type: "string"
+        description: "SCIP symbol of a resolved target."
+      boundary:
+        type: "string"
+        description: "Foreign module owner or dependency package."
+      topic:
+        type: "string"
+        description: "Event topic."
+      tx:
+        type: "string"
+        description: "Transaction identifier."
+      reads:
+        type: "array"
+        description: "State read by this node."
+        items:
+          type: "string"
+          description: "A value."
+      writes:
+        type: "array"
+        description: "State written by this node."
+        items:
+          type: "string"
+          description: "A value."
+      then:
+        type: "array"
+        description: "True branch."
+        items:
+          $ref: "#/$defs/node"
+          description: "A structural flow node."
+      else:
+        type: "array"
+        description: "False branch."
+        items:
+          $ref: "#/$defs/node"
+          description: "A structural flow node."
+      cases:
+        type: "array"
+        description: "Ordered switch cases."
+        items:
+          type: "object"
+          description: "Switch case."
+          additionalProperties: false
+          properties:
+            when:
+              type: "string"
+              description: "Case expression."
+            fallthrough:
+              type: "boolean"
+              description: "Whether execution proceeds into the following case."
+            steps:
+              type: "array"
+              description: "Case body."
+              items:
+                $ref: "#/$defs/node"
+                description: "A structural flow node."
+          required:
+            - "when"
+            - "steps"
+      default:
+        type: "array"
+        description: "Default switch branch."
+        items:
+          $ref: "#/$defs/node"
+          description: "A structural flow node."
+      body:
+        type: "array"
+        description: "Nested body."
+        items:
+          $ref: "#/$defs/node"
+          description: "A structural flow node."
+      catch:
+        type: "array"
+        description: "Error handler."
+        items:
+          $ref: "#/$defs/node"
+          description: "A structural flow node."
+      finally:
+        type: "array"
+        description: "Cleanup body."
+        items:
+          $ref: "#/$defs/node"
+          description: "A structural flow node."
+    required:
+      - "id"
+      - "kind"
+    allOf:
+      -
+        if:
+          properties:
+            kind:
+              const: "do"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "call"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "emit"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "wait"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "group"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "if"
+              description: "Kind discriminator."
+        then:
+          properties:
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "switch"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "for_each"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "while"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "parallel"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "try"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "return"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "fail"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "break"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              const: "continue"
+              description: "Kind discriminator."
+        then:
+          properties:
+            then:
+              not: {}
+              description: "Not allowed for this kind."
+            else:
+              not: {}
+              description: "Not allowed for this kind."
+            cases:
+              not: {}
+              description: "Not allowed for this kind."
+            default:
+              not: {}
+              description: "Not allowed for this kind."
+            body:
+              not: {}
+              description: "Not allowed for this kind."
+            catch:
+              not: {}
+              description: "Not allowed for this kind."
+            finally:
+              not: {}
+              description: "Not allowed for this kind."
+      -
+        if:
+          properties:
+            kind:
+              not:
+                const: "do"
+              description: "Non-collapsed node."
+        then:
+          properties:
+            code:
+              pattern: "^[^\\n\\r]*$"
+              description: "Single-line normalized code."

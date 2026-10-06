@@ -1,0 +1,149 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: "object"
+description: "Repository extraction and indexing configuration."
+additionalProperties: false
+properties:
+  modules:
+    type: "array"
+    description: "Owning modules."
+    items:
+      type: "object"
+      description: "Module ownership."
+      additionalProperties: false
+      properties:
+        path:
+          type: "string"
+          description: "Repository-relative path, with forward slashes."
+          pattern: "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        owner:
+          type: "string"
+          description: "Module owner."
+      required:
+        - "path"
+        - "owner"
+  ignore:
+    type: "array"
+    description: "Additional regexes for calls to ignore."
+    items:
+      type: "string"
+      description: "A value."
+  tx_decorators:
+    type: "array"
+    description: "Transaction decorator names."
+    items:
+      type: "string"
+      description: "A value."
+  collapse:
+    type: "boolean"
+    description: "Collapse adjacent unresolved operations."
+  index:
+    type: "object"
+    description: "Language indexer settings."
+    additionalProperties: false
+    properties:
+      typescript:
+        type: "object"
+        description: "Configuration of the typescript indexer."
+        additionalProperties: false
+        properties:
+          enabled:
+            type: "boolean"
+            description: "Enable this indexer."
+          args:
+            type: "array"
+            description: "Additional indexer arguments."
+            items:
+              type: "string"
+              description: "A value."
+      java:
+        type: "object"
+        description: "Configuration of the java indexer."
+        additionalProperties: false
+        properties:
+          enabled:
+            type: "boolean"
+            description: "Enable this indexer."
+          args:
+            type: "array"
+            description: "Additional indexer arguments."
+            items:
+              type: "string"
+              description: "A value."
+      python:
+        type: "object"
+        description: "Configuration of the python indexer."
+        additionalProperties: false
+        properties:
+          enabled:
+            type: "boolean"
+            description: "Enable this indexer."
+          args:
+            type: "array"
+            description: "Additional indexer arguments."
+            items:
+              type: "string"
+              description: "A value."
+          project_name:
+            type: "string"
+            description: "Python project name."
+  rules:
+    type: "array"
+    description: "Ordered call classification rules."
+    items:
+      type: "object"
+      description: "First matching call rule wins."
+      additionalProperties: false
+      properties:
+        match:
+          type: "string"
+          description: "Regular expression over normalized call text."
+        symbol:
+          type: "string"
+          description: "Regular expression over the SCIP symbol."
+        kind:
+          type: "string"
+          description: "Node kind override."
+          enum:
+            - "do"
+            - "call"
+            - "emit"
+            - "wait"
+            - "group"
+            - "if"
+            - "switch"
+            - "for_each"
+            - "while"
+            - "parallel"
+            - "try"
+            - "return"
+            - "fail"
+            - "break"
+            - "continue"
+        boundary:
+          type: "string"
+          description: "Boundary override."
+        topic:
+          type: "string"
+          description: "Topic override."
+        target:
+          type: "string"
+          description: "Target override."
+        reads:
+          type: "string"
+          description: "State read, with match capture expansion."
+        writes:
+          type: "string"
+          description: "State written, with match capture expansion."
+        tx:
+          type: "string"
+          description: "Transaction identifier."
+        inline_callback:
+          type: "boolean"
+          description: "Inline the call callback body."
+      anyOf:
+        -
+          required:
+            - "match"
+        -
+          required:
+            - "symbol"
