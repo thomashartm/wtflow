@@ -64,3 +64,13 @@ Indexes from package-local `.wtflow/index` directories are rebased to repository
 relative paths. Definitions and relationships are collected on load; document
 call-site tables are decoded and cached on first lookup. Stale entry and target
 files fall back to heuristics, omit SCIP symbols, and report W120.
+
+## M8 lint and Mermaid golden artifacts
+
+Added `.lint.txt` and `.mmd` companions for every existing flow golden, produced
+by the CLI and reviewed with deterministic diff checks. Added `.mmd` exports of
+the three M2 renderer snapshots so Docker syntax validation also covers error
+handlers, transactions, parallel execution, and German labels. These additions
+do not change any flow structure or existing snapshot. All twelve Mermaid files
+were accepted by the minlag/mermaid-cli container using its bundled Puppeteer
+configuration.

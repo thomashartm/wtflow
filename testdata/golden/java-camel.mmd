@@ -1,0 +1,16 @@
+---
+title: events
+---
+flowchart TD
+  start(["Start"])
+  finish(["Finish"])
+  start --> n1
+  subgraph n1["transacted()"]
+    n2[["to(#quot;direct:input#quot;)"]]:::k_call
+  end
+  style n1 fill:#fff4d6,stroke:#b88700,stroke-width:2px
+  n2 --> finish
+  classDef k_call fill:#e8f0ff,stroke:#4b6cb7
+  classDef k_emit fill:#e5f5e0,stroke:#4a8a3b
+  classDef k_fail fill:#ffe4e4,stroke:#b33
+  classDef k_term fill:#eee,stroke:#666

@@ -1,0 +1,29 @@
+---
+title: dispatch
+---
+flowchart TD
+  start(["Start"])
+  finish(["Finish"])
+  start --> n1
+  subgraph n1["normalize(value)"]
+    n2[["typescript: value.trim()"]]:::k_call
+    n2 --> n3
+    n3(["return value.trim()"]):::k_term
+  end
+  n3 --> n4
+  n4{"dispatch scip-typescript npm wtflow-ts-fixture 1.0.0 src/ma…"}
+  n4 -->|"scip-typescript npm wtflow-ts-fixture 1.0.0 src/matching/`matchers.ts`/ExactMatcher#match()."| n5
+  subgraph n5["this.matcher.match(value)"]
+    n6(["return value === 'exact' ? 1 : 0"]):::k_term
+  end
+  n4 -->|"scip-typescript npm wtflow-ts-fixture 1.0.0 src/matching/`matchers.ts`/FuzzyMatcher#match()."| n7
+  subgraph n7["this.matcher.match(value)"]
+    n8(["return value.length #gt; 3 ? 1 : 0"]):::k_term
+  end
+  n6 --> n9
+  n8 --> n9
+  n9(["return this.matcher.match(value)"]):::k_term
+  classDef k_call fill:#e8f0ff,stroke:#4b6cb7
+  classDef k_emit fill:#e5f5e0,stroke:#4a8a3b
+  classDef k_fail fill:#ffe4e4,stroke:#b33
+  classDef k_term fill:#eee,stroke:#666

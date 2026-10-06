@@ -1,0 +1,22 @@
+---
+title: control
+---
+flowchart TD
+  start(["Start"])
+  finish(["Finish"])
+  start --> n1
+  n1{{"const item of items"}}
+  n1 -->|"next"| n2
+  n2{"item === #quot;skip#quot;"}
+  n2 -->|"yes"| n3
+  n3["continue"]
+  n2 -->|"no"| n4
+  n4["send(item)"]
+  n3 --> n1
+  n4 --> n1
+  n1 -->|"done"| n5
+  n5(["return"]):::k_term
+  classDef k_call fill:#e8f0ff,stroke:#4b6cb7
+  classDef k_emit fill:#e5f5e0,stroke:#4a8a3b
+  classDef k_fail fill:#ffe4e4,stroke:#b33
+  classDef k_term fill:#eee,stroke:#666

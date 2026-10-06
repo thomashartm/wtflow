@@ -47,3 +47,43 @@ Run source checks from the source repository or keep flow files beneath its root
 `label` refuses edited structure and unknown IDs without changing the file.
 Output writes replace files atomically. Exit codes: 0 success, 1 lint failure,
 2 usage or I/O failure. `check --strict` also fails on warnings.
+
+## Indexing and resolution
+
+Enable the desired languages in `.wtflow.yaml`, install project dependencies,
+then run `wtflow index`. `--lang ts,java,py` selects languages and `--force`
+rebuilds unchanged indexes. TypeScript/Python use Node and their official npm
+indexers; Java requires scip-java, a JDK and a working Gradle or Maven build.
+These tools are used only by `index`. The resulting `*.scip` files and `meta.yaml`
+can be committed so extraction and tests work without them.
+
+Prefer `--resolver auto`: SCIP answers first and heuristics handle unresolved or
+stale files. `--resolver scip` requires an index; freshness fallback still applies.
+`--resolver heuristic` is useful for reference comparisons. W120 identifies
+stale entry/inlined files; `check --source` treats it as an error. The header
+records `scip`, `heuristic`, or `mixed`, and SCIP-resolved nodes carry symbols.
+Use `debug-resolve FILE:LINE:COL` to inspect a one-based UTF-8 byte position.
+
+Build the local indexer image with:
+
+```
+docker build -f docker/indexers.Dockerfile -t wtflow-indexers:local .
+docker run --rm -v "$PWD:/src" wtflow-indexers:local wtflow index
+```
+
+The suggested `ghcr.io/aderiserp/wtflow-indexers` name is a publication target;
+this repository does not publish it automatically. Python projects can supply
+an indexer `--environment environment.json` argument to avoid environment
+introspection through pip, as the committed fixture does.
+
+## Automation
+
+CI runs formatting, clippy, tests on the MSRV and stable, deterministic golden
+checks, Docker Mermaid syntax checks, and release builds for Linux x86_64/arm64
+(musl) and macOS x86_64/arm64. Artifacts are uploaded to the workflow run; no
+release or container is published automatically. The [consumer example](examples/consumer-workflow.yml)
+shows index refresh, source validation and render-diff checks; adapt its tool
+installation prerequisite to your repository.
+
+Use the [flow-docs skill](skills/flow-docs/SKILL.md) for assisted documentation.
+Local performance measurements and their scope are in [docs/performance.md](docs/performance.md).

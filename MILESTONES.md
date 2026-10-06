@@ -108,3 +108,20 @@ from once per occurrence to once per document. Measured entrypoint scan at
 after load at 28.931–29.641 microseconds. All three requested limits pass on
 Apple M4 Pro/macOS/Rust 1.80.1. See docs/performance.md for corpus and cache scope.
 All 32 workspace tests, formatting and clippy pass after the optimization.
+
+### M8
+
+Added MSRV/stable GitHub checks, four release-build targets, deterministic golden
+scripts, Docker Mermaid validation, the consumer workflow example, and the
+flow-docs skill. Used skill-creator guidance; its Python initializer/validator
+were not used under the project's no-Python requirement. The compact frontmatter
+and workflow were reviewed directly.
+
+Acceptance: actionlint accepts both workflows; shell syntax and golden diffs
+pass. All 32 tests, clippy and formatting pass on stable as well as MSRV.
+All 12 Mermaid artifacts render successfully in minlag/mermaid-cli. Native
+macOS arm64 and x86_64 release binaries build and run. The indexer Docker image
+builds on Linux arm64 and emits byte-identical dispatch output to the native CLI.
+No remote exists, so hosted CI/release-matrix execution and artifact publication
+are not claimed. The workflow defines Linux x86_64/arm64 musl and macOS
+x86_64/arm64 builds without publishing a release or image.

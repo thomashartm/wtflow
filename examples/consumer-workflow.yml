@@ -1,0 +1,22 @@
+name: Flow documentation
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  flows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Prerequisite: install wtflow and the enabled official indexers, or run
+      # this job in your tested wtflow-indexers image. Install project dependencies
+      # and make the Java build available before indexing.
+      - name: Refresh index and verify source
+        run: wtflow index && wtflow check --source docs/flows/*.flow.yaml
+      - name: Re-render flows
+        shell: bash
+        run: |
+          set -euo pipefail
+          for flow in docs/flows/*.flow.yaml; do
+            wtflow render -o "${flow%.flow.yaml}.mmd" "$flow"
+          done
+          git diff --exit-code -- docs/flows
