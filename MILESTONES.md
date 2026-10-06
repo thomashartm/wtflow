@@ -72,3 +72,16 @@ std::process and tempfile. They verify unchanged label fingerprints, unknown-ID
 atomicity, E003 after code tampering, E005 after threshold changes, update label
 retention, JSON todo/schema, Markdown rendering and debug ranges. Formatting and
 clippy with warnings denied pass on Rust 1.80.1.
+
+### M5
+
+Added the index-only external-tool runner, language selection/force/cache behavior,
+canonical metadata and per-file freshness checks. Added a Dockerfile with Node,
+Temurin 21, coursier-installed scip-java, Maven/Gradle and the Rust binary.
+
+Acceptance: ran `wtflow index --lang ts` against the fixture using the official
+scip-typescript 0.4.0 indexer, and committed its binary index and metadata. The
+process test copies that index, modifies the source, verifies heuristic output
+and W120, and verifies `check --source` promotes W120 to an error. All 24 workspace
+tests, formatting and clippy pass on Rust 1.80.1. Dockerfile image construction
+has not yet been verified; SCIP lookup itself is the next milestone.

@@ -7,6 +7,7 @@ use std::{
 };
 use wtflow_core::{labels, lint, yaml, Flow};
 use wtflow_extract::Cx;
+mod index;
 #[derive(Parser)]
 #[command(
     name = "wtflow",
@@ -30,6 +31,12 @@ enum Language {
 }
 #[derive(Subcommand)]
 enum Command {
+    Index {
+        #[arg(long, value_delimiter = ',')]
+        lang: Vec<String>,
+        #[arg(long)]
+        force: bool,
+    },
     Entrypoints {
         #[arg(long)]
         json: bool,
@@ -153,15 +160,17 @@ fn locate(flow_path: &Path, flow: &Flow) -> Result<PathBuf> {
         flow.entry.file
     )
 }
-fn reextract(path: &Path, flow: &Flow) -> Result<Flow> {
+fn reextract(path: &Path, flow: &Flow) -> Result<(Flow, Vec<String>)> {
     let entry = locate(path, flow)?;
     let cx = Cx::load(&entry)?;
-    cx.extract(
+    let new = cx.extract(
         &flow.entry.file,
         &flow.entry.symbol,
         Some(&flow.flow),
         flow.entry.depth,
-    )
+    )?;
+    let stale = cx.stale_for(&new);
+    Ok((new, stale))
 }
 fn point(text: &str, value: &str) -> Result<usize> {
     let (line, col) = value.split_once(':').context("position must be LINE:COL")?;
@@ -184,6 +193,7 @@ fn point(text: &str, value: &str) -> Result<usize> {
 }
 fn run() -> Result<i32> {
     match Cli::parse().command {
+        Command::Index { lang, force } => index::run(&lang, force)?,
         Command::Version => println!("wtflow {}", env!("CARGO_PKG_VERSION")),
         Command::Schema { json, config } => {
             if json {
@@ -237,6 +247,9 @@ fn run() -> Result<i32> {
                 .to_string_lossy()
                 .replace('\\', "/");
             let mut flow = cx.extract(&relative, symbol, name.as_deref(), depth)?;
+            for file in cx.stale_for(&flow) {
+                eprintln!("warning W120 - stale index for {file}");
+            }
             if let Some(old) = merge {
                 labels::carry(&load(&old)?, &mut flow)?;
             }
@@ -282,7 +295,10 @@ fn run() -> Result<i32> {
             for path in flows {
                 let old = load(&path)?;
                 old.verify_fingerprint()?;
-                let mut new = reextract(&path, &old)?;
+                let (mut new, stale) = reextract(&path, &old)?;
+                for file in stale {
+                    eprintln!("warning W120 - stale index for {file}");
+                }
                 let changed = new.fingerprint != old.fingerprint;
                 let kept = labels::carry(&old, &mut new)?;
                 updates.push((path, yaml::emit(&new)?, changed, kept));
@@ -308,8 +324,32 @@ fn run() -> Result<i32> {
                 };
                 if source {
                     if let Ok(flow) = yaml::load(&text, &path.display().to_string()) {
-                        context.source_changed =
-                            reextract(&path, &flow)?.fingerprint != flow.fingerprint;
+                        let (new, stale) = reextract(&path, &flow)?;
+                        context.source_changed = new.fingerprint != flow.fingerprint;
+                        context.stale_files = stale;
+                    }
+                } else if let Ok(flow) = yaml::load(&text, &path.display().to_string()) {
+                    if let Ok(entry) = locate(&path, &flow) {
+                        let config = wtflow_extract::config::RepositoryConfig::discover(&entry)?;
+                        if let Some(meta) = wtflow_resolve::metadata::Metadata::load(&config.root)?
+                        {
+                            let mut paths =
+                                std::collections::BTreeSet::from([flow.entry.file.clone()]);
+                            let mut nodes = vec![];
+                            wtflow_core::visit(&flow.steps, &mut nodes);
+                            for node in nodes {
+                                if let Some((file, _)) = node.src.rsplit_once(':') {
+                                    paths.insert(file.into());
+                                }
+                            }
+                            context.stale_files = paths
+                                .into_iter()
+                                .filter(|file| {
+                                    std::fs::read(config.root.join(file))
+                                        .map_or(true, |bytes| !meta.fresh(file, &bytes))
+                                })
+                                .collect();
+                        }
                     }
                 }
                 let diagnostics = lint::document(&text, &path.display().to_string(), &context);

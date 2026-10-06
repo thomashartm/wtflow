@@ -1543,7 +1543,10 @@ name = "wtflow-resolve"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "serde",
+ "serde_yaml_ng",
+ "sha2",
  "wtflow-core",
 ]
 

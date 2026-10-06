@@ -137,3 +137,61 @@ fn schema_todo_render_and_usage() {
         Some(2)
     );
 }
+#[test]
+fn committed_index_modified_source_warns_and_falls_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/ts");
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".wtflow/index")).unwrap();
+    for file in [
+        "src/control.ts",
+        ".wtflow/index/typescript.scip",
+        ".wtflow/index/meta.yaml",
+    ] {
+        std::fs::copy(fixture.join(file), dir.path().join(file)).unwrap();
+    }
+    std::fs::write(dir.path().join(".wtflow.yaml"), "collapse: true\n").unwrap();
+    let initial = run(
+        dir.path(),
+        &[
+            "extract",
+            "--entry",
+            "src/control.ts#control",
+            "-o",
+            "control.flow.yaml",
+        ],
+    );
+    assert!(initial.status.success());
+    assert!(!String::from_utf8_lossy(&initial.stderr).contains("W120"));
+    let source = dir.path().join("src/control.ts");
+    std::fs::write(
+        &source,
+        std::fs::read_to_string(&source)
+            .unwrap()
+            .replace("skip", "ignore"),
+    )
+    .unwrap();
+    let changed = run(
+        dir.path(),
+        &[
+            "extract",
+            "--entry",
+            "src/control.ts#control",
+            "-o",
+            "control.flow.yaml",
+        ],
+    );
+    assert!(changed.status.success());
+    assert!(
+        String::from_utf8_lossy(&changed.stderr).contains("W120 - stale index for src/control.ts")
+    );
+    let flow = wtflow_core::yaml::load(
+        &std::fs::read_to_string(dir.path().join("control.flow.yaml")).unwrap(),
+        "test",
+    )
+    .unwrap();
+    assert_eq!(flow.resolution, wtflow_core::ResolutionMode::Heuristic);
+    let checked = run(dir.path(), &["check", "--source", "control.flow.yaml"]);
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&checked.stdout).contains("error W120"));
+}

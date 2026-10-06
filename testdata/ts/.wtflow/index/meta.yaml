@@ -1,0 +1,10 @@
+commit: 7bbf1cb7555de19c79cf27482efdbb4ee234f3ea
+dirty: true
+files:
+  src/bugs.ts: a5b80fe3d93a6d0481494b839a51ee159c7667caa16d0823298be26e9521cbfe
+  src/control.ts: 3ab1983771c9f36f936f0722d26ce267e741ebeda91ee79a84e2698190e4f345
+  src/matching/service.ts: 5167fa2c53acfc6e8ed5851a45ec0de5b821f0e2aedbba6b5add64f77040b349
+  src/reconciliation/controller.ts: 2ac09d32a4bf0d0c21c6b8f9328114e90c454627ed7051305727b082a492189b
+  src/reconciliation/service.ts: 48182ba5a05813fa11384aa935b7ba414f4b7e5378706dacbe04e3e16a8b150b
+indexers:
+  typescript: 0.4.0

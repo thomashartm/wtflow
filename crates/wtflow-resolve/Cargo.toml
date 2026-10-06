@@ -10,3 +10,6 @@ anyhow.workspace = true
 
 wtflow-core = { path = "../wtflow-core" }
 serde.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+hex.workspace = true

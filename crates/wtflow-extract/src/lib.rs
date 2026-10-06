@@ -59,6 +59,7 @@ pub struct Cx {
     pub files: BTreeMap<String, SourceFile>,
     pub funcs: BTreeMap<String, Vec<Func>>,
     heuristic: HeuristicResolver,
+    pub metadata: Option<wtflow_resolve::metadata::Metadata>,
 }
 impl Cx {
     pub fn load(entry: &Path) -> Result<Self> {
@@ -69,15 +70,38 @@ impl Cx {
             .map(|(path, f)| (path.clone(), functions::collect(f)))
             .collect();
         let heuristic = heuristic::build(&files, &funcs, &config.root)?;
+        let metadata = wtflow_resolve::metadata::Metadata::load(&config.root)?;
         Ok(Self {
             config,
             files,
             funcs,
             heuristic,
+            metadata,
         })
     }
     pub fn resolver(&self) -> &dyn Resolver {
         &self.heuristic
+    }
+    pub fn stale_for(&self, flow: &Flow) -> Vec<String> {
+        let Some(meta) = &self.metadata else {
+            return vec![];
+        };
+        let mut paths = BTreeSet::from([flow.entry.file.clone()]);
+        let mut nodes = vec![];
+        wtflow_core::visit(&flow.steps, &mut nodes);
+        for n in nodes {
+            if let Some((path, _)) = n.src.rsplit_once(':') {
+                paths.insert(path.into());
+            }
+        }
+        paths
+            .into_iter()
+            .filter(|p| {
+                self.files
+                    .get(p)
+                    .map_or(true, |f| !meta.fresh(p, f.text.as_bytes()))
+            })
+            .collect()
     }
     pub fn find_symbol(&self, file: &str, symbol: &str) -> Result<Func> {
         let lookup = symbol
