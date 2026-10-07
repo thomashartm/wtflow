@@ -78,14 +78,18 @@ const SETTINGS: [(&str, &str, &str); 15] = [
     ("output.open", "false", "Open HTML after analysis"),
     (
         "index.typescript.enabled",
-        "false",
-        "Enable TypeScript indexing",
+        "true",
+        "Automatically index TypeScript when present; false disables the default",
     ),
-    ("index.java.enabled", "false", "Enable Java indexing"),
+    (
+        "index.java.enabled",
+        "true",
+        "Automatically index Java when present; false disables the default",
+    ),
     (
         "index.python.enabled",
-        "false",
-        "Enable Python indexing; set project_name in advanced settings",
+        "true",
+        "Automatically index Python when present; project_name defaults to the folder name",
     ),
     (
         "collapse",
@@ -373,6 +377,12 @@ impl Workspace {
         let mut form = catalog::Form::new(name);
         if name == "analyze" && self.no_open {
             form.set("no_open", "true");
+        }
+        if name == "index" {
+            match crate::index::default_languages(&self.root) {
+                Ok(languages) => form.set("lang", languages.join(",")),
+                Err(error) => form.error = error.to_string(),
+            }
         }
         if name == "init" {
             let mut langs = Vec::new();
@@ -1552,7 +1562,6 @@ mod tests {
     fn index_checkboxes_preserve_cli_options_and_defaults() {
         let mut ws = Workspace::new(PathBuf::from("/project"));
         ws.form("index");
-        press(&mut ws, KeyCode::Down);
         press(&mut ws, KeyCode::Char(' ')); // TypeScript
         press(&mut ws, KeyCode::Down);
         press(&mut ws, KeyCode::Enter); // Java
@@ -1570,7 +1579,11 @@ mod tests {
         assert!(ws.job.is_none());
         ws.form.as_mut().unwrap().selected = 0;
         press(&mut ws, KeyCode::Char(' '));
+        press(&mut ws, KeyCode::Down);
+        press(&mut ws, KeyCode::Char(' ')); // deselect Java too
         ws.paste("not a language");
+        assert!(ws.form.as_ref().unwrap().request().is_err());
+        ws.form.as_mut().unwrap().selected = 0;
         assert_eq!(
             ws.form.as_ref().unwrap().args().unwrap(),
             ["index", "--force"]
@@ -1586,7 +1599,7 @@ mod tests {
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         ws.form("index");
         terminal.draw(|frame| ws.draw(frame)).unwrap();
-        let submit_area = ws.form_targets.iter().find(|(_, i)| *i == 5).unwrap().0;
+        let submit_area = ws.form_targets.iter().find(|(_, i)| *i == 4).unwrap().0;
         ws.mouse(MouseEvent {
             kind: MouseEventKind::Moved,
             column: submit_area.x,
@@ -1595,8 +1608,8 @@ mod tests {
         });
         assert!(ws.form.is_some());
         assert!(ws.job.is_none());
-        click_control(&mut ws, &mut terminal, 1);
-        click_control(&mut ws, &mut terminal, 4);
+        click_control(&mut ws, &mut terminal, 0);
+        click_control(&mut ws, &mut terminal, 3);
         assert_eq!(
             ws.form.as_ref().unwrap().args().unwrap(),
             ["index", "--lang", "ts", "--force"]
@@ -1620,7 +1633,7 @@ mod tests {
                 Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
             let mut ws = Workspace::new(PathBuf::from("/project"));
             ws.form("index");
-            ws.form.as_mut().unwrap().selected = 4;
+            ws.form.as_mut().unwrap().selected = 3;
             terminal.draw(|frame| ws.draw(frame)).unwrap();
             let buffer = terminal.backend().buffer();
             let lines: Vec<String> = buffer
@@ -1650,5 +1663,43 @@ mod tests {
             assert!(ws.form.is_none());
             assert!(ws.job.is_some());
         }
+    }
+    #[test]
+    fn index_form_preselects_detected_defaults_and_keeps_empty_selection_empty() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("app.ts"), "const x = 1;").unwrap();
+        std::fs::write(root.path().join("App.java"), "class App {}").unwrap();
+        std::fs::create_dir(root.path().join(".wtflow")).unwrap();
+        std::fs::write(
+            root.path().join(".wtflow/config.yaml"),
+            "index:\n  java:\n    enabled: false\n",
+        )
+        .unwrap();
+        let mut ws = Workspace::new(root.path().to_owned());
+        ws.form("index");
+        assert_eq!(
+            ws.form.as_ref().unwrap().args().unwrap(),
+            ["index", "--lang", "ts"]
+        );
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| ws.draw(frame)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("[x] TypeScript / JavaScript"));
+        assert!(text.contains("[ ] Java"));
+        press(&mut ws, KeyCode::Char(' '));
+        press(&mut ws, KeyCode::F(5));
+        assert!(ws
+            .form
+            .as_ref()
+            .unwrap()
+            .error
+            .contains("Select at least one language"));
+        assert!(ws.job.is_none());
     }
 }

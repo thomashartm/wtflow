@@ -138,6 +138,10 @@ impl Form {
         let cli = Cli::try_parse_from(std::iter::once("wtflow".to_owned()).chain(args))?;
         let command = cli.command.context("missing operation")?;
         match &command {
+            Command::Index { lang, .. } => anyhow::ensure!(
+                !lang.is_empty(),
+                "Select at least one language to index. Space or a click checks a language."
+            ),
             Command::Init { lang, .. } => anyhow::ensure!(
                 !lang.is_empty(),
                 "Select languages for setup (ts, java, py)."

@@ -166,9 +166,13 @@ links inside it. Files outside `.wtflow`, including any legacy root config, rema
 
 ## Indexing and resolution
 
-Enable the desired languages in `.wtflow/config.yaml`, install project dependencies,
-then run `wtflow index`. `--lang ts,java,py` selects languages and `--force`
-rebuilds unchanged indexes. TypeScript/Python use Node and their official npm
+Install project dependencies, then run `wtflow index`. Languages are detected from
+source files and enabled by default, including when no wtflow config exists.
+Set `index.<language>.enabled: false` to exclude a language from the defaults.
+`--lang ts,java,py` explicitly selects languages for that run, overriding disabled
+defaults; `--force` rebuilds unchanged indexes. Missing TypeScript settings use
+`--infer-tsconfig`; Python project names default to the project folder name.
+Configured indexer arguments and project names are preserved. TypeScript/Python use Node and their official npm
 indexers; Java requires scip-java, a JDK and a working Gradle or Maven build.
 These tools are used only by `index`. The resulting `*.scip` files and `meta.yaml`
 can be committed so extraction and tests work without them.

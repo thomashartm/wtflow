@@ -8,7 +8,7 @@ use std::{
     process::{Command, Stdio},
 };
 use wtflow_extract::{
-    config::RepositoryConfig,
+    config::{Indexer, RepositoryConfig},
     source::{self, Language},
 };
 use wtflow_resolve::metadata::{hash, Metadata};
@@ -126,6 +126,32 @@ fn execute(
         Ok(String::new())
     }
 }
+fn languages(config: &RepositoryConfig) -> [(Language, &'static str, Option<&Indexer>); 3] {
+    [
+        (Language::Ts, "ts", config.config.index.typescript.as_ref()),
+        (Language::Java, "java", config.config.index.java.as_ref()),
+        (Language::Py, "py", config.config.index.python.as_ref()),
+    ]
+}
+
+fn defaults(config: &RepositoryConfig, files: &[std::path::PathBuf]) -> Vec<&'static str> {
+    languages(config)
+        .into_iter()
+        .filter_map(|(lang, short, setting)| {
+            (setting.map_or(true, |s| s.enabled)
+                && files.iter().any(|p| Language::from_path(p) == Some(lang)))
+            .then_some(short)
+        })
+        .collect()
+}
+
+/// The TUI uses the same language defaults as an index command without --lang.
+/// Inspect filenames only; indexing must not require successful source parsing.
+pub fn default_languages(root: &Path) -> Result<Vec<&'static str>> {
+    let config = RepositoryConfig::load(root)?;
+    Ok(defaults(&config, &source::paths(root)?))
+}
+
 pub fn run(langs: &[String], force: bool, show_progress: bool) -> Result<()> {
     let config = RepositoryConfig::discover(&std::env::current_dir()?)?;
     let mut log = IndexLog::create(&config.root)?;
@@ -151,38 +177,31 @@ fn run_logged(
     let root = &config.root;
     let files = source::paths(root)?;
     let mut jobs = vec![];
-    for (lang, short, name, setting) in [
-        (
-            Language::Ts,
-            "ts",
-            "typescript",
-            config.config.index.typescript.as_ref(),
-        ),
-        (
-            Language::Java,
-            "java",
-            "java",
-            config.config.index.java.as_ref(),
-        ),
-        (
-            Language::Py,
-            "py",
-            "python",
-            config.config.index.python.as_ref(),
-        ),
-    ] {
-        let Some(setting) = setting.filter(|s| s.enabled) else {
-            continue;
+    let defaults = defaults(config, &files);
+    for (lang, short, setting) in languages(config) {
+        let name = lang.name();
+        let selected = if langs.is_empty() {
+            defaults.contains(&short)
+        } else {
+            langs.iter().any(|s| s == short || s == name)
         };
-        if !langs.is_empty() && !langs.iter().any(|s| s == short || s == name) {
-            continue;
-        }
-        if !files
-            .iter()
-            .any(|file| Language::from_path(file) == Some(lang))
+        if !selected
+            || !files
+                .iter()
+                .any(|file| Language::from_path(file) == Some(lang))
         {
             continue;
         }
+        let fallback = Indexer {
+            enabled: true,
+            args: if lang == Language::Ts {
+                vec!["--infer-tsconfig".into()]
+            } else {
+                Vec::new()
+            },
+            project_name: None,
+        };
+        let setting = setting.unwrap_or(&fallback);
         let output = format!(".wtflow/index/{name}.scip");
         let (program, prefix, mut args) = match lang {
             Language::Ts => (
@@ -198,12 +217,12 @@ fn run_logged(
                     "index".into(),
                     ".".into(),
                     "--project-name".into(),
-                    setting.project_name.clone().with_context(|| {
-                        format!(
-                            "{}:1: index.python.project_name is required",
-                            config.path.display()
-                        )
-                    })?,
+                    setting.project_name.clone().unwrap_or_else(|| {
+                        root.file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("project")
+                            .to_owned()
+                    }),
                 ],
             ),
         };
@@ -219,7 +238,7 @@ fn run_logged(
     }
     anyhow::ensure!(
         !jobs.is_empty(),
-        "no enabled indexers for languages present in this repository; configure index in {}",
+        "no languages selected for indexing: no supported source files found, or detected languages are disabled in {}; select a language with --lang or in the index form",
         config.path.display()
     );
     let mut meta = Metadata::load(root)?.unwrap_or_default();

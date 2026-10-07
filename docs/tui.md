@@ -55,8 +55,10 @@ a click to run; **Cancel** closes without applying changes. `F5` (or Ctrl+Enter)
 also runs the operation.
 
 **Build / refresh index** offers language checkboxes and **Force rebuild (ignore
-cache)**. **Use project languages** indexes all enabled languages; individual
-choices limit this run to those languages (they must also be enabled in Settings).
+cache)**. Detected languages start checked, including in projects with no wtflow
+config. Languages explicitly disabled in Settings start unchecked; checking one
+enables it for this run. Clearing all languages shows a validation message instead
+of silently restoring defaults. The same defaults apply to `wtflow index`.
 Choose **Build index**, or **Rebuild index** when force is checked, to start.
 
 `Ctrl+Y` copies the equivalent CLI command using the system clipboard helper;
