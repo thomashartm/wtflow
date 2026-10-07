@@ -1,6 +1,7 @@
 //! Persistent terminal workspace. All operations go through the shared command contract.
 mod catalog;
 mod explorer;
+mod form_ui;
 mod selection;
 use crate::{app, clipboard, runtime, Command};
 use anyhow::Result;
@@ -202,6 +203,7 @@ struct Workspace {
     details: bool,
     details_offset: u16,
     list_area: Rect,
+    form_targets: Vec<(Rect, usize)>,
     help: bool,
     selection: selection::Selection,
 }
@@ -226,6 +228,7 @@ impl Workspace {
             details: false,
             details_offset: 0,
             list_area: Rect::default(),
+            form_targets: Vec::new(),
             help: false,
             selection: selection::Selection::default(),
         }
@@ -418,6 +421,7 @@ impl Workspace {
                 self.snapshot.setting("output.export_dir", ".wtflow/flows")
             );
         }
+        self.form_targets.clear();
         self.form = Some(form);
     }
     fn entries(&self) -> Vec<&EntryPoint> {
@@ -489,7 +493,11 @@ impl Workspace {
             }
             return;
         }
-        if self.form.is_some() || self.help {
+        if self.help {
+            return;
+        }
+        if self.form.is_some() {
+            self.form_mouse(mouse);
             return;
         }
         match mouse.kind {
@@ -520,6 +528,47 @@ impl Workspace {
                 }
             }
             _ => {}
+        }
+    }
+    fn form_mouse(&mut self, mouse: MouseEvent) {
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+        ) {
+            let code = if mouse.kind == MouseEventKind::ScrollDown {
+                KeyCode::Down
+            } else {
+                KeyCode::Up
+            };
+            let _ = self.form_key(KeyEvent::new(code, KeyModifiers::NONE));
+            return;
+        }
+        if !matches!(
+            mouse.kind,
+            MouseEventKind::Moved | MouseEventKind::Up(event::MouseButton::Left)
+        ) {
+            return;
+        }
+        let Some((_, index)) = self
+            .form_targets
+            .iter()
+            .find(|(area, _)| area.contains(Position::new(mouse.column, mouse.row)))
+        else {
+            return;
+        };
+        let form = self.form.as_mut().unwrap();
+        form.selected = *index;
+        if matches!(mouse.kind, MouseEventKind::Up(event::MouseButton::Left)) {
+            let control = form_ui::selected(form);
+            // Clicking a text field only focuses it; other controls activate.
+            if matches!(control, form_ui::Control::Field(i) if !form.fields[i].toggle) {
+                return;
+            }
+            if let Err(error) = self.form_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+                if let Some(form) = &mut self.form {
+                    form.error = error.to_string();
+                }
+            }
         }
     }
     fn activate(&mut self) {
@@ -754,8 +803,16 @@ impl Workspace {
             self.form = None;
             return Ok(());
         }
+        let control = form_ui::selected(self.form.as_ref().unwrap());
+        let activate =
+            matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) && key.modifiers.is_empty();
+        if activate && control == form_ui::Control::Cancel {
+            self.form = None;
+            return Ok(());
+        }
         if key.code == KeyCode::F(5)
             || (key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL))
+            || (activate && control == form_ui::Control::Submit)
         {
             let form = self.form.as_ref().unwrap();
             match form.request() {
@@ -813,9 +870,25 @@ impl Workspace {
             return Ok(());
         }
         let form = self.form.as_mut().unwrap();
-        let count = form.fields.len();
-        if count == 0 {
-            return Ok(());
+        let count = form_ui::controls(form).len();
+        match control {
+            form_ui::Control::Language(index, language) if activate => {
+                form_ui::toggle_language(form, index, language);
+                form.error.clear();
+                return Ok(());
+            }
+            form_ui::Control::Field(index) if form.fields[index].toggle && activate => {
+                let field = &mut form.fields[index];
+                field.value = if field.value == "true" {
+                    "false"
+                } else {
+                    "true"
+                }
+                .into();
+                form.error.clear();
+                return Ok(());
+            }
+            _ => {}
         }
         match key.code {
             KeyCode::Down | KeyCode::Tab | KeyCode::Enter => {
@@ -823,17 +896,11 @@ impl Workspace {
             }
             KeyCode::Up | KeyCode::BackTab => form.selected = (form.selected + count - 1) % count,
             _ => {
-                let field = &mut form.fields[form.selected];
-                if field.toggle {
-                    if key.code == KeyCode::Char(' ') {
-                        field.value = if field.value == "true" {
-                            "false"
-                        } else {
-                            "true"
-                        }
-                        .into();
-                    }
-                } else {
+                let Some(index) = form_ui::field_index(form) else {
+                    return Ok(());
+                };
+                let field = &mut form.fields[index];
+                if !field.toggle {
                     match key.code {
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             field.value.clear()
@@ -861,11 +928,12 @@ impl Workspace {
             return text.clone();
         }
         if let Some(form) = &self.form {
-            return form
-                .fields
-                .get(form.selected)
-                .map(|f| f.value.clone())
-                .unwrap_or_default();
+            return match form_ui::selected(form) {
+                form_ui::Control::Field(i) | form_ui::Control::Language(i, _) => {
+                    form.fields[i].value.clone()
+                }
+                _ => String::new(),
+            };
         }
         if self.searching {
             return self.query.clone();
@@ -892,7 +960,7 @@ impl Workspace {
     fn can_paste(&self) -> bool {
         !self.help
             && if let Some(form) = &self.form {
-                form.fields.get(form.selected).is_some_and(|f| !f.toggle)
+                form_ui::field_index(form).is_some_and(|i| !form.fields[i].toggle)
             } else {
                 self.searching || (matches!(self.tab, 1 | 2) && self.explorer.is_none())
             }
@@ -903,8 +971,10 @@ impl Workspace {
         }
         self.selection.clear();
         if let Some(form) = &mut self.form {
-            if let Some(field) = form.fields.get_mut(form.selected) {
-                field.value.push_str(&clipboard::paste_text(text, true));
+            if let Some(index) = form_ui::field_index(form) {
+                form.fields[index]
+                    .value
+                    .push_str(&clipboard::paste_text(text, true));
                 form.error.clear();
             }
         } else {
@@ -1006,6 +1076,7 @@ impl Workspace {
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
         self.list_area = Rect::default();
+        self.form_targets.clear();
         if area.width < 40 || area.height < 10 {
             frame.render_widget(
                 Paragraph::new("wtflow\nResize to at least 40 × 10\nq: quit")
@@ -1206,13 +1277,13 @@ impl Workspace {
             })
             .collect::<Vec<_>>();
         frame.render_widget(Paragraph::new(Line::from(navigation)), regions[4]);
-        if let Some(form) = &self.form {
-            draw_form(frame, form, &self.root);
+        if let Some(form) = &mut self.form {
+            self.form_targets = form_ui::draw(frame, form, &self.root);
         }
         if self.help {
             let popup = popup(area, 78, 28);
             frame.render_widget(Clear, popup);
-            frame.render_widget(Paragraph::new("Tab / Shift+Tab: section    1–6: jump to section\n↑ ↓ / j k: select    Page Up/Down: scroll\nEnter: open / expand    ←: collapse / parent\nEsc: back    *: expand entire flow\n/ : search    F2: include tests    d: details on narrow screens\n\ni: index    r: refresh / discover / update\na: analyze    e: export    c: check    l: labels\nCtrl+P: all CLI operations\n\nForms: Tab moves, Space toggles, Ctrl+U clears\nF5 / Ctrl+Enter: run    Ctrl+Y: copy CLI command\nEsc: close form without applying\n\nDrag text: release to copy (any pane or popup)\nAlt+Y / Ctrl+Shift+C / Ctrl+Insert: copy focused text\nCtrl+V / Shift+Insert / terminal Paste: paste\nSearch: line breaks become spaces; forms keep newlines\n\nCtrl+C: cancel job    q: quit when idle\n\nPaths and text are data; no shell commands are evaluated.\nPress any key to close.").block(panel(" Keyboard help ")).wrap(Wrap { trim: false }), popup);
+            frame.render_widget(Paragraph::new("Tab / Shift+Tab: section    1–6: jump to section\n↑ ↓ / j k: select    Page Up/Down: scroll\nEnter: open / expand    ←: collapse / parent\nEsc: back    *: expand entire flow\n/ : search    F2: include tests    d: details on narrow screens\n\ni: index    r: refresh / discover / update\na: analyze    e: export    c: check    l: labels\nCtrl+P: all CLI operations\n\nForms: Tab / arrows move, Space toggles, Ctrl+U clears\nClick / Enter: activate button    F5: run\nCtrl+Y: copy CLI command\nEsc: close form without applying\n\nDrag text: release to copy (any pane or popup)\nAlt+Y / Ctrl+Shift+C / Ctrl+Insert: copy focused text\nCtrl+V / Shift+Insert / terminal Paste: paste\nSearch: line breaks become spaces; forms keep newlines\n\nCtrl+C: cancel job    q: quit when idle\n\nPaths and text are data; no shell commands are evaluated.\nPress any key to close.").block(panel(" Keyboard help ")).wrap(Wrap { trim: false }), popup);
         }
         self.selection.draw(frame);
     }
@@ -1247,101 +1318,6 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
-}
-fn draw_form(frame: &mut Frame, form: &catalog::Form, root: &Path) {
-    let area = popup(frame.area(), 100, (form.fields.len() as u16 + 12).max(16));
-    frame.render_widget(Clear, area);
-    frame.render_widget(panel(&format!(" {} · options ", form.name)), area);
-    let inner = area.inner(Margin {
-        horizontal: 2,
-        vertical: 1,
-    });
-    let regions = Layout::vertical([
-        Constraint::Length(if area.height < 16 { 1 } else { 2 }),
-        Constraint::Min(2),
-        Constraint::Length(if area.height < 16 { 1 } else { 3 }),
-        Constraint::Length(if area.height < 16 { 1 } else { 2 }),
-        Constraint::Length(if area.height < 16 { 1 } else { 2 }),
-    ])
-    .split(inner);
-    frame.render_widget(
-        Paragraph::new(clean(&form.about)).wrap(Wrap { trim: false }),
-        regions[0],
-    );
-    let width = regions[1].width.saturating_sub(26) as usize;
-    let items = form.fields.iter().map(|field| {
-        let value = if field.toggle {
-            if field.value == "true" {
-                "[x] Space to toggle".into()
-            } else {
-                "[ ] Space to toggle".into()
-            }
-        } else if field.value.is_empty() {
-            "<project default / omitted>".into()
-        } else {
-            clean(&field.value).replace('\n', " ")
-        };
-        let value: String = value
-            .chars()
-            .rev()
-            .take(width)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        ListItem::new(format!(
-            "{:<23} {}",
-            format!(
-                "{}{}",
-                field.long.as_deref().unwrap_or(&field.id),
-                if field.required { " *" } else { "" }
-            ),
-            value
-        ))
-    });
-    let mut state = ListState::default().with_selected(Some(form.selected));
-    frame.render_stateful_widget(
-        List::new(items)
-            .highlight_symbol("› ")
-            .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White)),
-        regions[1],
-        &mut state,
-    );
-    let help = if form.error.is_empty() {
-        form.fields
-            .get(form.selected)
-            .map(|f| f.help.clone())
-            .unwrap_or_else(|| "No options. Press F5 to run.".into())
-    } else {
-        form.error.clone()
-    };
-    frame.render_widget(
-        Paragraph::new(clean(&help))
-            .style(Style::default().fg(if form.error.is_empty() {
-                Color::Cyan
-            } else {
-                Color::Red
-            }))
-            .wrap(Wrap { trim: false }),
-        regions[2],
-    );
-    frame.render_widget(
-        Paragraph::new(clean(&form.equivalent(root)))
-            .dim()
-            .wrap(Wrap { trim: false }),
-        regions[3],
-    );
-    frame.render_widget(
-        Paragraph::new(if area.height < 16 {
-            "Tab next · F5 run · Alt+Y copy · Ctrl+V paste"
-        } else if form.name == "config" {
-            "Tab field · Ctrl+U clear · F5 save default\nAlt+Y copy value · Ctrl+V paste · Ctrl+Y command · Esc cancel"
-        } else {
-            "Tab field · Ctrl+U clear · Space toggle · F5 run\nAlt+Y copy value · Ctrl+V paste · Ctrl+Y command · Esc cancel"
-        })
-        .wrap(Wrap { trim: false }),
-        regions[4],
-    );
 }
 struct Screen;
 impl Screen {
@@ -1443,10 +1419,13 @@ mod tests {
         let text = "café 🐈\r\nnext\tvalue\x1b\0";
         for (name, _) in catalog::commands() {
             ws.form(&name);
-            let count = ws.form.as_ref().unwrap().fields.len();
-            for i in 0..count {
+            let controls = form_ui::controls(ws.form.as_ref().unwrap());
+            for (selected, control) in controls.iter().enumerate() {
+                let form_ui::Control::Field(i) = *control else {
+                    continue;
+                };
                 let form = ws.form.as_mut().unwrap();
-                form.selected = i;
+                form.selected = selected;
                 form.error = "old validation error".into();
                 let field = &mut form.fields[i];
                 let before = field.value.clone();
@@ -1546,5 +1525,130 @@ mod tests {
         ws.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
             .unwrap();
         assert!(ws.selection.text.is_none());
+    }
+    fn press(ws: &mut Workspace, code: KeyCode) {
+        ws.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap();
+    }
+    fn click_control(
+        ws: &mut Workspace,
+        terminal: &mut Terminal<ratatui::backend::TestBackend>,
+        index: usize,
+    ) {
+        terminal.draw(|frame| ws.draw(frame)).unwrap();
+        let area = ws.form_targets.iter().find(|(_, i)| *i == index).unwrap().0;
+        for kind in [
+            MouseEventKind::Down(event::MouseButton::Left),
+            MouseEventKind::Up(event::MouseButton::Left),
+        ] {
+            ws.mouse(MouseEvent {
+                kind,
+                column: area.x,
+                row: area.y,
+                modifiers: KeyModifiers::NONE,
+            });
+        }
+    }
+    #[test]
+    fn index_checkboxes_preserve_cli_options_and_defaults() {
+        let mut ws = Workspace::new(PathBuf::from("/project"));
+        ws.form("index");
+        press(&mut ws, KeyCode::Down);
+        press(&mut ws, KeyCode::Char(' ')); // TypeScript
+        press(&mut ws, KeyCode::Down);
+        press(&mut ws, KeyCode::Enter); // Java
+        press(&mut ws, KeyCode::Down);
+        press(&mut ws, KeyCode::Down);
+        press(&mut ws, KeyCode::Enter); // force
+        let form = ws.form.as_ref().unwrap();
+        assert_eq!(
+            form.args().unwrap(),
+            ["index", "--lang", "ts,java", "--force"]
+        );
+        assert!(
+            matches!(form.request().unwrap(), Command::Index { force: true, lang } if lang == ["ts", "java"])
+        );
+        assert!(ws.job.is_none());
+        ws.form.as_mut().unwrap().selected = 0;
+        press(&mut ws, KeyCode::Char(' '));
+        ws.paste("not a language");
+        assert_eq!(
+            ws.form.as_ref().unwrap().args().unwrap(),
+            ["index", "--force"]
+        );
+        press(&mut ws, KeyCode::BackTab); // Cancel
+        press(&mut ws, KeyCode::Enter);
+        assert!(ws.form.is_none());
+        assert!(ws.job.is_none());
+    }
+    #[test]
+    fn form_mouse_toggles_validates_and_cancels_without_background_actions() {
+        let mut ws = Workspace::new(PathBuf::from("/project"));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        ws.form("index");
+        terminal.draw(|frame| ws.draw(frame)).unwrap();
+        let submit_area = ws.form_targets.iter().find(|(_, i)| *i == 5).unwrap().0;
+        ws.mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: submit_area.x,
+            row: submit_area.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(ws.form.is_some());
+        assert!(ws.job.is_none());
+        click_control(&mut ws, &mut terminal, 1);
+        click_control(&mut ws, &mut terminal, 4);
+        assert_eq!(
+            ws.form.as_ref().unwrap().args().unwrap(),
+            ["index", "--lang", "ts", "--force"]
+        );
+        let form = ws.form.as_ref().unwrap();
+        let cancel = form_ui::controls(form).len() - 1;
+        click_control(&mut ws, &mut terminal, cancel);
+        assert!(ws.form.is_none());
+        assert!(ws.job.is_none());
+        ws.form("analyze");
+        let submit = form_ui::controls(ws.form.as_ref().unwrap()).len() - 2;
+        click_control(&mut ws, &mut terminal, submit);
+        assert!(!ws.form.as_ref().unwrap().error.is_empty());
+        assert!(ws.job.is_none());
+        assert_eq!(ws.selected[0], 0);
+    }
+    #[test]
+    fn form_buttons_launch_and_remain_visible_on_small_terminals() {
+        for (width, height) in [(40, 10), (60, 10), (80, 24), (120, 35)] {
+            let mut terminal =
+                Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            let mut ws = Workspace::new(PathBuf::from("/project"));
+            ws.form("index");
+            ws.form.as_mut().unwrap().selected = 4;
+            terminal.draw(|frame| ws.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let lines: Vec<String> = buffer
+                .content
+                .chunks(width as usize)
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+                .collect();
+            assert!(
+                lines.iter().any(|line| line.contains("[ ] Force rebuild")),
+                "{width}x{height}: {lines:?}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("[ Build index ]") && line.contains("[ Cancel ]")),
+                "{width}x{height}: {lines:?}"
+            );
+            // Read-only command with a missing file proves the button dispatches
+            // without writing project configuration or invoking an indexer.
+            ws.form("todo");
+            ws.form
+                .as_mut()
+                .unwrap()
+                .set("flow", "/missing-for-tui-test.flow.yaml");
+            let submit = form_ui::controls(ws.form.as_ref().unwrap()).len() - 2;
+            click_control(&mut ws, &mut terminal, submit);
+            assert!(ws.form.is_none());
+            assert!(ws.job.is_some());
+        }
     }
 }

@@ -18,6 +18,7 @@ pub struct Form {
     pub about: String,
     pub fields: Vec<Field>,
     pub selected: usize,
+    pub offset: usize,
     pub error: String,
 }
 pub fn commands() -> Vec<(String, String)> {
@@ -96,6 +97,7 @@ impl Form {
                 .unwrap_or_default(),
             fields,
             selected: 0,
+            offset: 0,
             error: String::new(),
         }
     }
