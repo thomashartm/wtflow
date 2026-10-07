@@ -27,6 +27,10 @@ unresolved calls, external boundaries, recursion, and traversal limits.
 
 ## Navigation
 
+Section shortcuts sit in a compact row at the bottom. In Project, the Details
+panel keeps project and index status at its bottom while the selected action
+description appears above.
+
 | Control | Action |
 |---|---|
 | Tab / Shift+Tab, or 1–6 | Change section |
