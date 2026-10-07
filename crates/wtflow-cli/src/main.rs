@@ -1,4 +1,8 @@
+mod app;
 mod filter;
+mod runtime;
+mod settings;
+mod tui;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
@@ -8,6 +12,7 @@ use std::{
 };
 use wtflow_core::{labels, lint, yaml, Flow};
 use wtflow_extract::Cx;
+mod clear;
 mod flows;
 mod index;
 mod init;
@@ -25,7 +30,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_progress: bool,
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
+    /// Project working directory (relative paths resolve here)
+    #[arg(long, global = true)]
+    project: Option<PathBuf>,
 }
 #[derive(Clone, Copy, ValueEnum)]
 enum ResolverMode {
@@ -40,6 +48,52 @@ enum Language {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Open the persistent terminal workspace
+    Tui {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Analyze an entrypoint and save the configured flow and exports
+    Analyze {
+        /// Starting point as FILE#SYMBOL
+        #[arg(long)]
+        entry: String,
+        #[arg(long)]
+        name: Option<String>,
+        /// Maximum call depth (defaults to project analysis.depth, then 32)
+        #[arg(long)]
+        depth: Option<usize>,
+        /// Call resolution mode (defaults to project analysis.resolver)
+        #[arg(long, value_enum)]
+        resolver: Option<ResolverMode>,
+        /// Save exports without opening a browser
+        #[arg(long)]
+        no_open: bool,
+        /// Saved YAML and context directory, relative to project root
+        #[arg(long)]
+        flows_dir: Option<PathBuf>,
+        #[command(flatten)]
+        output: settings::OutputArgs,
+    },
+    /// Export a saved flow without reanalyzing source
+    Export {
+        flow: PathBuf,
+        #[arg(long)]
+        open: bool,
+        #[command(flatten)]
+        output: settings::OutputArgs,
+    },
+    /// Show project settings or set a dotted key to a YAML value
+    Config {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        #[arg(long, requires = "value")]
+        key: Option<String>,
+        #[arg(long, requires = "key", allow_hyphen_values = true)]
+        value: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Browse saved flows, or analyze an entrypoint and save its diagram
     Flows {
         /// Filter route, function, or file names (case-insensitive; * and ? wildcards)
@@ -54,7 +108,24 @@ enum Command {
     },
     /// Create a project configuration by answering a few questions
     Init {
-        /// Directory for .wtflow.yaml (defaults to the current directory)
+        /// Noninteractive languages, separated by commas (omit for guided setup)
+        #[arg(long, value_delimiter = ',')]
+        lang: Vec<String>,
+        /// Project owner used by noninteractive setup
+        #[arg(long)]
+        owner: Option<String>,
+        /// Project directory for .wtflow/config.yaml (defaults to the current directory)
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Reset local wtflow data, asking whether to keep the project configuration
+    Clear {
+        /// Confirm cleanup without prompting; keeps config unless --remove-config
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, requires = "yes")]
+        remove_config: bool,
+        /// Project directory to clear (defaults to the current directory)
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
@@ -88,11 +159,11 @@ enum Command {
         #[arg(long)]
         name: Option<String>,
         /// Follow internal calls by default; set a smaller depth for a shorter summary
-        #[arg(long, default_value_t = wtflow_extract::DEFAULT_DEPTH)]
-        depth: usize,
+        #[arg(long)]
+        depth: Option<usize>,
         /// How to follow calls: auto prefers indexes, scip requires an index, heuristic uses syntax
-        #[arg(long, value_enum, default_value = "auto")]
-        resolver: ResolverMode,
+        #[arg(long, value_enum)]
+        resolver: Option<ResolverMode>,
         /// Keep labels from an existing flow where the step ID and code are unchanged
         #[arg(long)]
         merge: Option<PathBuf>,
@@ -119,6 +190,14 @@ enum Command {
         /// Include callee documentation, neighboring steps, and glossary; requires --json
         #[arg(long, requires = "json")]
         context: bool,
+    },
+    /// Set a single step label without changing the flow structure
+    LabelStep {
+        flow: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long, allow_hyphen_values = true)]
+        text: String,
     },
     /// Apply your own step labels without changing the flow structure
     Label {
@@ -147,11 +226,11 @@ enum Command {
         /// Flow YAML file to draw
         flow: PathBuf,
         /// Language for diagram connectors: en (English) or de (German)
-        #[arg(long, value_enum, default_value = "en")]
-        lang: Language,
+        #[arg(long, value_enum)]
+        lang: Option<Language>,
         /// Show source code alongside labels
-        #[arg(long)]
-        detail: bool,
+        #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+        detail: Option<bool>,
         /// Output file (.mmd or .md); omit to print Mermaid to standard output
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
@@ -188,6 +267,7 @@ fn load(path: &Path) -> Result<Flow> {
     yaml::load(&read(path)?, &path.display().to_string())
 }
 fn write(path: Option<&Path>, text: &str) -> Result<()> {
+    runtime::checkpoint()?;
     if let Some(path) = path {
         let parent = path
             .parent()
@@ -215,7 +295,7 @@ fn write(path: Option<&Path>, text: &str) -> Result<()> {
         }
         result.with_context(|| format!("{}:1: write", path.display()))
     } else {
-        std::io::stdout().lock().write_all(text.as_bytes())?;
+        runtime::emit(runtime::Event::Output(text.to_owned()));
         Ok(())
     }
 }
@@ -270,332 +350,30 @@ fn point(text: &str, value: &str) -> Result<usize> {
 }
 fn run() -> Result<i32> {
     let cli = Cli::parse();
-    let show_progress = progress::enabled(cli.no_progress);
+    if let Some(root) = cli.project {
+        std::env::set_current_dir(root).context("open project")?;
+    }
     wtflow_core::schema::initialize()?;
     match cli.command {
-        Command::Flows {
-            dir,
-            no_open,
-            filter,
-        } => flows::run(
-            &dir,
-            show_progress,
-            !no_open,
-            filter.as_deref().unwrap_or(""),
-        )?,
-        Command::Init { dir } => init::run(&dir)?,
-        Command::Index { lang, force } => index::run(&lang, force, show_progress)?,
-        Command::Version => println!("wtflow {}", env!("CARGO_PKG_VERSION")),
-        Command::Schema { json, config } => {
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&wtflow_core::schema::value(config)?)?
-                );
-            } else {
-                print!(
-                    "{}",
-                    if config {
-                        wtflow_core::schema::CONFIG
-                    } else {
-                        wtflow_core::schema::FLOW
-                    }
-                );
-            }
+        Some(Command::Tui { dir }) => {
+            tui::run(&dir)?;
+            Ok(0)
         }
-        Command::Entrypoints { dir, json, filter } => {
-            let mut progress = Progress::start(show_progress, "Finding entrypoints...");
-            let (cx, warnings) = Cx::load_entrypoints(&dir)?;
-            let entries = cx.entrypoints();
-            flows::save_entries(&cx.config.root, &entries)?;
-            let filter = filter::Filter::new(filter.as_deref().unwrap_or(""));
-            let entries: Vec<_> = entries
-                .into_iter()
-                .filter(|e| filter.matches(&[&e.trigger, &e.symbol, &e.file]))
-                .collect();
-            progress.finish();
-            for warning in warnings {
-                eprintln!("warning: {warning}");
-            }
-            if json {
-                println!("{}", serde_json::to_string_pretty(&entries)?);
-            } else {
-                for e in entries {
-                    println!("{}#{} {}", e.file, e.symbol, e.trigger);
-                }
-            }
+        None if std::io::IsTerminal::is_terminal(&std::io::stdin())
+            && std::io::IsTerminal::is_terminal(&std::io::stdout()) =>
+        {
+            tui::run(Path::new("."))?;
+            Ok(0)
         }
-        Command::Extract {
-            entry,
-            name,
-            depth,
-            resolver,
-            merge,
-            output,
-        } => {
-            let mut progress = Progress::start(show_progress, "Extracting flow...");
-            let (path, symbol) = entry
-                .rsplit_once('#')
-                .context("--entry must be FILE#SYMBOL")?;
-            let path = Path::new(path)
-                .canonicalize()
-                .with_context(|| format!("{path}:1: entry"))?;
-            let mut cx = Cx::load(&path)?;
-            if !matches!(resolver, ResolverMode::Heuristic) {
-                cx.enable_scip(matches!(resolver, ResolverMode::Scip))?;
-            }
-            let relative = path
-                .strip_prefix(&cx.config.root)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let extraction = cx.extract_report(&relative, symbol, name.as_deref(), depth)?;
-            let mut flow = extraction.flow;
-            let stale = cx.stale_for(&flow);
-            if let Some(old) = merge {
-                labels::carry(&load(&old)?, &mut flow)?;
-            }
-            let text = yaml::emit(&flow)?;
-            progress.finish();
-            for note in extraction.notes {
-                eprintln!("note: {note}");
-            }
-            for file in stale {
-                eprintln!("warning W120 - stale index for {file}");
-            }
-            write(output.as_deref(), &text)?;
+        None => {
+            use clap::CommandFactory;
+            Cli::command().print_help()?;
+            Ok(0)
         }
-        Command::Label {
-            flow,
-            labels: input,
-        } => {
-            let mut f = load(&flow)?;
-            let text = if input == "-" {
-                let mut text = String::new();
-                std::io::stdin().read_to_string(&mut text)?;
-                text
-            } else {
-                read(Path::new(&input))?
-            };
-            let patch: BTreeMap<String, String> =
-                serde_yaml_ng::from_str(&text).context("labels: invalid flat id-to-label map")?;
-            labels::apply(&mut f, &patch)?;
-            write(Some(&flow), &yaml::emit(&f)?)?;
-        }
-        Command::Todo {
-            flow,
-            all,
-            json,
-            context,
-        } => {
-            let f = load(&flow)?;
-            f.verify_fingerprint()?;
-            if context {
-                let mut progress = Progress::start(show_progress, "Gathering step context...");
-                let entry = locate(&flow, &f)?;
-                let mut cx = Cx::load(&entry)?;
-                cx.enable_scip(false)?;
-                let stale = cx.stale_for(&f);
-                let text =
-                    serde_json::to_string_pretty(&wtflow_extract::context::packets(&cx, &f, all)?)?;
-                progress.finish();
-                for file in stale {
-                    eprintln!("warning W120 - stale index for {file}");
-                }
-                println!("{text}");
-                return Ok(0);
-            }
-            let todo = labels::todo(&f, all);
-            if json {
-                println!("{}", serde_json::to_string_pretty(&todo)?);
-            } else {
-                for n in todo {
-                    println!(
-                        "{} {} {} {}",
-                        n.id,
-                        n.kind.as_str(),
-                        n.path,
-                        n.code.replace('\n', " ")
-                    );
-                }
-            }
-        }
-        Command::Update { flows } => {
-            let mut updates = vec![];
-            for path in flows {
-                let mut progress = Progress::start(show_progress, "Updating flow...");
-                let old = load(&path)?;
-                old.verify_fingerprint()?;
-                let (mut new, stale) = reextract(&path, &old)?;
-                let changed = new.fingerprint != old.fingerprint;
-                let kept = labels::carry(&old, &mut new)?;
-                updates.push((path, yaml::emit(&new)?, changed, kept));
-                progress.finish();
-                for file in stale {
-                    eprintln!("warning W120 - stale index for {file}");
-                }
-            }
-            for (path, text, changed, kept) in updates {
-                write(Some(&path), &text)?;
-                println!("structure changed={changed}, labels kept={kept}");
-            }
-        }
-        Command::Check {
-            flows,
-            strict,
-            source,
-            verbose,
-        } => {
-            let mut failed = false;
-            for path in flows {
-                let mut progress = Progress::start(show_progress, "Checking flow...");
-                let text = read(&path)?;
-                let mut context = lint::Context {
-                    verbose,
-                    source,
-                    ..lint::Context::default()
-                };
-                if source {
-                    if let Ok(flow) = yaml::load(&text, &path.display().to_string()) {
-                        let (new, stale) = reextract(&path, &flow)?;
-                        context.source_changed = new.fingerprint != flow.fingerprint;
-                        context.stale_files = stale;
-                    }
-                } else if let Ok(flow) = yaml::load(&text, &path.display().to_string()) {
-                    if let Ok(entry) = locate(&path, &flow) {
-                        let config = wtflow_extract::config::RepositoryConfig::discover(&entry)?;
-                        if let Some(meta) = wtflow_resolve::metadata::Metadata::load(&config.root)?
-                        {
-                            let mut paths =
-                                std::collections::BTreeSet::from([flow.entry.file.clone()]);
-                            let mut nodes = vec![];
-                            wtflow_core::visit(&flow.steps, &mut nodes);
-                            for node in nodes {
-                                if let Some((file, _)) = node.src.rsplit_once(':') {
-                                    paths.insert(file.into());
-                                }
-                            }
-                            context.stale_files = paths
-                                .into_iter()
-                                .filter(|file| {
-                                    std::fs::read(config.root.join(file))
-                                        .map_or(true, |bytes| !meta.fresh(file, &bytes))
-                                })
-                                .collect();
-                        }
-                    }
-                }
-                let diagnostics = lint::document(&text, &path.display().to_string(), &context);
-                failed |= lint::fails(&diagnostics, strict);
-                progress.finish();
-                for d in diagnostics {
-                    println!("{d}");
-                }
-            }
-            return Ok(i32::from(failed));
-        }
-        Command::Render {
-            flow,
-            lang,
-            detail,
-            output,
-        } => {
-            let mut progress = Progress::start(show_progress, "Rendering diagram...");
-            let f = load(&flow)?;
-            f.verify_fingerprint()?;
-            let options = wtflow_render::Options {
-                lang: match lang {
-                    Language::En => wtflow_render::Language::En,
-                    Language::De => wtflow_render::Language::De,
-                },
-                detail,
-            };
-            let graph = wtflow_render::render(&f, &options)?;
-            let text = if output
-                .as_ref()
-                .and_then(|p| p.extension())
-                .is_some_and(|s| s == "md")
-            {
-                format!("```mermaid\n{graph}```\n")
-            } else {
-                graph
-            };
-            progress.finish();
-            write(output.as_deref(), &text)?;
-        }
-        Command::DebugAst { file, range } => {
-            let mut progress = Progress::start(show_progress, "Parsing source...");
-            let text = read(&file)?;
-            let source = wtflow_extract::source::SourceFile::parse_unchecked(
-                file.to_string_lossy().into(),
-                text,
-            )?;
-            let node = if let Some(range) = range {
-                let (start, end) = range.split_once('-').context("range must be L:C-L:C")?;
-                let start = point(&source.text, start)?;
-                let end = point(&source.text, end)?;
-                anyhow::ensure!(start <= end, "range is reversed");
-                source
-                    .tree
-                    .root_node()
-                    .descendant_for_byte_range(start, end)
-                    .context("range outside syntax tree")?
-            } else {
-                source.tree.root_node()
-            };
-            fn dump(n: tree_sitter::Node<'_>, f: &wtflow_extract::SourceFile, depth: usize) {
-                println!(
-                    "{}{} [{}:{}-{}:{}] {}",
-                    "  ".repeat(depth),
-                    n.kind(),
-                    n.start_position().row + 1,
-                    n.start_position().column + 1,
-                    n.end_position().row + 1,
-                    n.end_position().column + 1,
-                    wtflow_extract::source::normalized(f.text(n))
-                );
-                for c in wtflow_extract::source::children(n) {
-                    dump(c, f, depth + 1);
-                }
-            }
-            progress.finish();
-            dump(node, &source, 0);
-        }
-        Command::DebugResolve { position } => {
-            let mut progress = Progress::start(show_progress, "Resolving call...");
-            let (fileline, col) = position
-                .rsplit_once(':')
-                .context("position must be FILE:LINE:COL")?;
-            let (file, line) = fileline
-                .rsplit_once(':')
-                .context("position must be FILE:LINE:COL")?;
-            let file = Path::new(file).canonicalize()?;
-            let mut cx = Cx::load(&file)?;
-            cx.enable_scip(false)?;
-            let relative = file
-                .strip_prefix(&cx.config.root)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let source = cx.files.get(&relative).context("source not found")?;
-            let pos = point(&source.text, &format!("{line}:{col}"))?;
-            let n = source
-                .tree
-                .root_node()
-                .descendant_for_byte_range(pos, pos)
-                .context("position outside syntax tree")?;
-            let resolution = cx.resolver().resolve(
-                &relative,
-                wtflow_resolve::ByteRange {
-                    start: n.start_byte(),
-                    end: n.end_byte(),
-                },
-            );
-            let text = serde_json::to_string_pretty(&resolution)?;
-            progress.finish();
-            println!("{text}");
-        }
+        Some(command) => app::execute(command, progress::enabled(cli.no_progress)),
     }
-    Ok(0)
 }
+
 fn main() {
     match run() {
         Ok(code) => std::process::exit(code),

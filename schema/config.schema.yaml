@@ -147,3 +147,25 @@ properties:
         -
           required:
             - "symbol"
+  analysis:
+    type: object
+    additionalProperties: false
+    properties:
+      depth: {type: integer, minimum: 0}
+      resolver: {type: string, enum: [auto, scip, heuristic]}
+  output:
+    type: object
+    additionalProperties: false
+    properties:
+      flows_dir: {type: string, minLength: 1}
+      export_dir: {type: string, minLength: 1}
+      formats:
+        type: array
+        uniqueItems: true
+        items: {type: string, enum: [html, md, mmd, lint]}
+      lang: {type: string, enum: [en, de]}
+      detail: {type: boolean}
+      direction: {type: string, enum: [TD, LR]}
+      theme: {type: string, enum: [default, light, dark]}
+      expanded: {type: boolean}
+      open: {type: boolean}

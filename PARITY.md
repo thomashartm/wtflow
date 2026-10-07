@@ -93,3 +93,13 @@ step code remains schema-valid; collapsed `do` blocks retain their block format.
 Source locations and definition documentation still refer to the original code.
 Comment wording changes no longer change these nodes' fingerprints. Existing
 goldens do not contain the affected syntax and are unchanged.
+
+## CLI and TUI parity
+
+The terminal workspace and CLI submit the same typed commands to the shared
+application dispatcher. TUI action forms derive options and validation from
+Clap. Configuration, extraction, artifact generation, and saved-flow discovery
+are shared. Catalog coverage and fixture artifact/diagnostic comparisons run in
+`cargo test -p wtflow-cli`; terminal layout, cancellation, and CLI compatibility
+have additional regression tests. New domain capabilities must remain available
+through both frontends. See [the workspace guide](docs/tui.md#maintaining-clitui-parity).

@@ -5,6 +5,7 @@ use std::{
     io::{self, BufRead, Write},
     path::Path,
 };
+use wtflow_extract::config::{RepositoryConfig, CONFIG_PATH, LEGACY_CONFIG_PATH};
 
 struct Questions<R, W> {
     input: R,
@@ -48,26 +49,56 @@ impl<R: BufRead, W: Write> Questions<R, W> {
 }
 
 pub fn run(dir: &Path) -> Result<()> {
-    configure(dir, io::stdin().lock(), io::stdout().lock()).with_context(|| {
-        format!(
-            "{}:1: initialize project",
-            dir.join(".wtflow.yaml").display()
-        )
-    })
+    configure(dir, io::stdin().lock(), io::stdout().lock())
+        .with_context(|| format!("{}:1: initialize project", dir.join(CONFIG_PATH).display()))
 }
 
-fn configure(dir: &Path, input: impl BufRead, output: impl Write) -> Result<()> {
+fn configure(dir: &Path, input: impl BufRead, mut output: impl Write) -> Result<()> {
     let root = std::env::current_dir()?.join(dir);
     anyhow::ensure!(
         !root.exists() || root.is_dir(),
         "{} is not a directory",
         dir.display()
     );
-    let path = root.join(".wtflow.yaml");
+    let path = root.join(CONFIG_PATH);
     match fs::symlink_metadata(&path) {
         Ok(_) => anyhow::bail!("configuration already exists; edit it instead of running init"),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
+    }
+    let legacy = root.join(LEGACY_CONFIG_PATH);
+    match fs::symlink_metadata(&legacy) {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                metadata.is_file(),
+                "{}: existing config is not a regular file; move it manually",
+                legacy.display()
+            );
+            RepositoryConfig::load(&root)?;
+            fs::create_dir_all(root.join(".wtflow"))?;
+            // Linking then unlinking preserves bytes and permissions and refuses
+            // to overwrite a config created concurrently. The old file remains
+            // intact if creating the destination fails.
+            fs::hard_link(&legacy, &path).with_context(|| {
+                format!("{}: migrate config without overwriting", path.display())
+            })?;
+            fs::remove_file(&legacy).with_context(|| {
+                format!(
+                    "{}: config copied to {}; remove legacy file",
+                    legacy.display(),
+                    path.display()
+                )
+            })?;
+            writeln!(
+                output,
+                "Moved {} to {}",
+                dir.join(LEGACY_CONFIG_PATH).display(),
+                dir.join(CONFIG_PATH).display()
+            )?;
+            return Ok(());
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     let project = root
         .file_name()
@@ -207,13 +238,13 @@ fn configure(dir: &Path, input: impl BufRead, output: impl Write) -> Result<()> 
     let value = serde_yaml_ng::from_str(&text)?;
     wtflow_core::schema::validate(&value, true)?;
     let _: wtflow_extract::config::Config = serde_json::from_value(value)?;
-    fs::create_dir_all(&root)?;
+    fs::create_dir_all(root.join(".wtflow"))?;
     // create_new also protects configurations created while the questions were open.
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)
-        .context("create .wtflow.yaml (existing files are never overwritten)")?;
+        .context("create .wtflow/config.yaml (existing files are never overwritten)")?;
     if let Err(error) = file
         .write_all(text.as_bytes())
         .and_then(|()| file.sync_all())
@@ -225,8 +256,43 @@ fn configure(dir: &Path, input: impl BufRead, output: impl Write) -> Result<()> 
     writeln!(
         questions.output,
         "Created {}",
-        dir.join(".wtflow.yaml").display()
+        dir.join(CONFIG_PATH).display()
     )?;
     writeln!(questions.output, "Next, install this project's dependencies, then run `wtflow index` and `wtflow entrypoints .` from that directory.")?;
+    Ok(())
+}
+
+/// Reuses the guided initializer and its validation without terminal input.
+pub fn unattended(dir: &Path, languages: &[String], owner: Option<&str>) -> Result<()> {
+    let project = dir
+        .canonicalize()?
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let owner = owner.unwrap_or(&project);
+    anyhow::ensure!(!owner.contains(['\n', '\r']), "owner must be one line");
+    let python = languages.iter().any(|v| v == "py" || v == "python");
+    for lang in languages {
+        anyhow::ensure!(
+            matches!(
+                lang.as_str(),
+                "ts" | "typescript" | "java" | "py" | "python"
+            ),
+            "unsupported language: {lang}"
+        );
+    }
+    let input = format!(
+        "{}\n{owner}\n{}no\n",
+        languages.join(","),
+        if python {
+            format!("{project}\n")
+        } else {
+            String::new()
+        }
+    );
+    let mut output = Vec::new();
+    configure(dir, std::io::Cursor::new(input), &mut output)?;
+    crate::out_raw!("{}", String::from_utf8_lossy(&output));
     Ok(())
 }

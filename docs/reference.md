@@ -2,7 +2,7 @@
 
 For an overview and a first example, see the [README](../README.md).
 
-A Rust CLI for deterministic source-derived flow documents, lint, and Mermaid.
+A Rust CLI and terminal workspace for deterministic source-derived flow documents, lint, and Mermaid.
 SCIP provides call resolution and tree-sitter provides control flow. Labels may
 be edited separately; structural changes require extraction. No LLM calls.
 
@@ -15,6 +15,15 @@ Implementation proceeds through the acceptance gates in [MILESTONES.md](../MILES
 The CLI supports heuristic extraction, checks and rendering. Dependency versions and Cargo.lock are committed.
 When refreshing the lockfile, use modern Cargo with
 `--config 'resolver.incompatible-rust-versions="fallback"'`, then verify on 1.80.1.
+
+## Terminal workspace and output settings
+
+Run `wtflow tui` or, in an interactive terminal, `wtflow` without a command.
+The [workspace guide](tui.md) covers indexing, discovery, exploration, settings,
+output formats and locations, keyboard controls, cancellation, and CLI parity.
+New `analyze`, `export`, `config`, and `label-step` commands expose the same
+operations for scripts. Existing commands remain available. Use global
+`--project DIR` to resolve command arguments from another project directory.
 
 ## Format
 
@@ -134,16 +143,30 @@ questions are answered. The command suggests languages from package/build files,
 asks for the project's owner or service name, and optionally assigns owners to
 individual folders. Python indexing also needs a project name.
 
-The generated `.wtflow.yaml` enables the selected indexers, uses TypeScript's
+The generated `.wtflow/config.yaml` enables the selected indexers, uses TypeScript's
 `--infer-tsconfig` option when selected, and enables step collapsing. Custom
 classification rules and other advanced settings can be added afterward.
 Setup validates the configuration before writing, never overwrites an existing
 file or symlink, and runs no external tools. Invalid answers are prompted again;
 ending input before setup completes creates no configuration.
 
+Configuration discovery walks up from the entry file or requested directory.
+At each project root, `.wtflow/config.yaml` takes precedence over the legacy
+`.wtflow.yaml`. All relative paths still refer to the project root (the parent
+of `.wtflow`). Invalid configs are reported rather than falling back silently.
+Running `init` with only a legacy config moves it to the new location, preserving
+contents and permissions. If both files exist, `init` refuses to overwrite either.
+
+`wtflow clear [--dir PATH]` resets the project's `.wtflow` contents. It asks
+`Keep config.yaml? [Y/n]`, defaulting to yes, before deleting flows and their labels,
+diagrams, indexes, logs, and cached entrypoints. Answer `n` to delete the config too.
+`q` or end-of-input cancels without changes. Clearing works even with an invalid
+config. The command refuses a symlinked `.wtflow` directory and does not follow
+links inside it. Files outside `.wtflow`, including any legacy root config, remain.
+
 ## Indexing and resolution
 
-Enable the desired languages in `.wtflow.yaml`, install project dependencies,
+Enable the desired languages in `.wtflow/config.yaml`, install project dependencies,
 then run `wtflow index`. `--lang ts,java,py` selects languages and `--force`
 rebuilds unchanged indexes. TypeScript/Python use Node and their official npm
 indexers; Java requires scip-java, a JDK and a working Gradle or Maven build.

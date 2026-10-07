@@ -3,7 +3,7 @@ name: flow-docs
 description: Extract, label, check, and render source-derived flow documentation with wtflow. Use for repository flow documents, not general architecture diagrams.
 ---
 
-Use the repository's `.wtflow.yaml` for ownership, call rules and enabled indexers.
+Use the repository's `.wtflow/config.yaml` for ownership, call rules and enabled indexers.
 Run `wtflow index` before extracting or updating flows. Indexing needs the enabled
 language's official indexer and project dependencies; extraction/check/render read
 the resulting SCIP files and never launch indexers. If indexing fails, report the

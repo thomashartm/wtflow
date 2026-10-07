@@ -32,7 +32,7 @@ documentation. Signatures come from SCIP signature documentation or fenced code
 in SymbolInformation.documentation, with an AST signature fallback when SCIP
 provides only prose. Unresolved or stale callee metadata is represented by null.
 
-An optional `glossary.yaml` in the `.wtflow.yaml` repository root is parsed as YAML
+An optional `glossary.yaml` in the project root (beside `.wtflow/`) is parsed as YAML
 and passed through as JSON in each packet. Its format is intentionally open; for
 example, `version: '1'` and `terms: {openItem: outstanding invoice}`. Glossary data
 is context only and never changes structural output or the flow fingerprint.

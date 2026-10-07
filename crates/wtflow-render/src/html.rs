@@ -45,6 +45,34 @@ pub fn render_with_context(flow: &Flow, report: &str, context: &FlowContext) -> 
     out
 }
 
+/// Presentation-only settings do not alter flow structure or fingerprints.
+pub fn render_styled(
+    flow: &Flow,
+    report: &str,
+    context: &FlowContext,
+    theme: &str,
+    expanded: bool,
+    detail: bool,
+) -> String {
+    let mut html = render_with_context(flow, report, context);
+    if expanded {
+        html = html.replace("<details class=\"flow\">", "<details class=\"flow\" open>");
+    }
+    if detail {
+        html = html.replace(
+            "<details class=\"metadata\">",
+            "<details class=\"metadata\" open>",
+        );
+    }
+    let css = match theme {
+        "dark" => "<style>:root{color-scheme:dark;--ink:#e5e7eb;--muted:#9ca3af;--line:#475569;--accent:#5eead4}body{background:#0f172a}.step,#notes,button{background:#1e293b}nav{background:#0f172aee}pre,.note-input{background:#0f172a;color:var(--ink)}.purpose{background:#183c37;color:#d1fae5}.return-type{background:#24365c;color:#bfdbfe}.endpoint{background:#cbd5e1;color:#0f172a}.step.k_for_each,.step.k_while{background:#3b2c15}.k_for_each>details>summary,.k_while>details>summary{color:#fcd34d}</style>",
+        "light" => "<style>:root{color-scheme:light}</style>",
+        _ => "",
+    };
+    html = html.replacen("</head>", &format!("{css}</head>"), 1);
+    html
+}
+
 fn branch(out: &mut String, title: &str, nodes: &[Node], depth: usize, context: &FlowContext) {
     out.push_str(&format!(
         "<section class=\"branch\"><h3>{}</h3>",

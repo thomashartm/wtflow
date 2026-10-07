@@ -17,6 +17,7 @@ pub struct Progress {
 
 impl Progress {
     pub fn start(enabled: bool, message: &str) -> Self {
+        crate::runtime::phase(message);
         if !enabled {
             return Self { worker: None };
         }

@@ -74,8 +74,8 @@ fn explicit_directories_get_deterministic_multilanguage_config_and_folder_owners
         assert!(config.config.index.typescript.unwrap().enabled);
     }
     assert_eq!(
-        std::fs::read(root.path().join("first project/.wtflow.yaml")).unwrap(),
-        std::fs::read(root.path().join("second project/.wtflow.yaml")).unwrap()
+        std::fs::read(root.path().join("first project/.wtflow/config.yaml")).unwrap(),
+        std::fs::read(root.path().join("second project/.wtflow/config.yaml")).unwrap()
     );
     assert!(!root.path().join(".wtflow.yaml").exists());
 }
@@ -107,7 +107,8 @@ fn interrupted_input_and_existing_configs_never_write() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("input ended"));
     assert!(!root.path().join("unfinished").exists());
 
-    let path = root.path().join(".wtflow.yaml");
+    std::fs::create_dir(root.path().join(".wtflow")).unwrap();
+    let path = root.path().join(".wtflow/config.yaml");
     std::fs::write(&path, "# keep this file\ncollapse: false\n").unwrap();
     let output = init(root.path(), &[], "");
     assert_eq!(output.status.code(), Some(2));
@@ -129,4 +130,44 @@ fn dangling_config_symlink_is_preserved() {
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(std::fs::read_link(path).unwrap(), Path::new("missing.yaml"));
     assert!(!root.path().join("missing.yaml").exists());
+}
+
+#[test]
+fn init_moves_legacy_config_without_changing_content_or_running_questions() {
+    let root = tempfile::tempdir().unwrap();
+    let legacy = root.path().join(".wtflow.yaml");
+    let text = "# keep my comments\nmodules:\n  - path: src\n    owner: billing\ncollapse: false\n";
+    std::fs::write(&legacy, text).unwrap();
+    std::fs::create_dir_all(root.path().join(".wtflow/flows")).unwrap();
+    std::fs::write(root.path().join(".wtflow/flows/keep.txt"), "keep").unwrap();
+    let output = init(root.path(), &[], "");
+    assert!(success(&output).contains("Moved"));
+    assert_eq!(
+        std::fs::read_to_string(root.path().join(".wtflow/config.yaml")).unwrap(),
+        text
+    );
+    assert!(!legacy.exists());
+    assert!(root.path().join(".wtflow/flows/keep.txt").exists());
+    assert_eq!(
+        RepositoryConfig::discover(&root.path().join(".wtflow/flows"))
+            .unwrap()
+            .root,
+        root.path().canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn migration_preserves_invalid_legacy_and_refuses_conflicting_config() {
+    let root = tempfile::tempdir().unwrap();
+    let old = root.path().join(".wtflow.yaml");
+    std::fs::write(&old, "[invalid").unwrap();
+    assert_eq!(init(root.path(), &[], "").status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), "[invalid");
+    assert!(!root.path().join(".wtflow").exists());
+    std::fs::create_dir(root.path().join(".wtflow")).unwrap();
+    let new = root.path().join(".wtflow/config.yaml");
+    std::fs::write(&new, "collapse: true\n").unwrap();
+    assert_eq!(init(root.path(), &[], "").status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&new).unwrap(), "collapse: true\n");
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), "[invalid");
 }

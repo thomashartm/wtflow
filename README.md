@@ -22,6 +22,17 @@ problems such as unreachable steps and errors that get silently ignored.
 
 wtflow reads your code without running it. It does not send it to an AI service.
 
+## Work in the terminal
+
+Run `wtflow tui` in your project (or simply `wtflow` in an interactive terminal).
+The workspace lets you initialize settings, build indexes, discover entrypoints,
+explore calls and branches, edit labels, check flows, and export diagrams.
+
+Use **Settings** to choose output formats, appearance, and destinations.
+Press **Ctrl+P** for all operations; **F5** runs a form and **Ctrl+Y** copies its
+CLI equivalent. Existing CLI commands and arguments remain available.
+See the [terminal workspace guide](docs/tui.md) for controls and configuration.
+
 ## Try it
 
 With Rust installed, run this from the wtflow repository:
@@ -71,8 +82,10 @@ wtflow init
 
 It asks which languages to follow, who owns the project, and whether individual
 folders have different owners. Press Enter to accept a suggestion. It creates
-`.wtflow.yaml`; an existing config is left untouched. To set up another folder,
+`.wtflow/config.yaml`; an existing config is left untouched. To set up another folder,
 use `wtflow init --dir /path/to/project`.
+If you have the older `.wtflow.yaml`, running `wtflow init` moves it into
+`.wtflow/config.yaml`, keeping your settings and comments.
 
 Choose TypeScript, then build the project's code index:
 
@@ -162,6 +175,12 @@ browser. Use `wtflow flows --dir /path/to/project` for another
 project; existing flows in folders such as `docs/flows` are still recognized.
 
 ## Keep it useful
+
+To start fresh, run `wtflow clear`. It shows the project directory and asks
+**Keep config.yaml? [Y/n]**. Press Enter to keep your settings while deleting
+saved flows, diagrams, indexes, logs, and cached analysis inside `.wtflow`.
+Answer `n` to remove the settings too, or `q` to cancel.
+Use `wtflow clear --dir /path/to/project` for another project.
 
 After changing your code, refresh the project index with `wtflow index`, then run
 `wtflow update` on your flow file. Labels stay attached to unchanged steps.
