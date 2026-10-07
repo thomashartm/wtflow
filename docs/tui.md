@@ -39,11 +39,29 @@ unresolved calls, external boundaries, recursion, and traversal limits.
 | Esc | Close a form, leave a flow, or clear the search |
 | `?` | Keyboard help |
 | Ctrl+C | Cancel the active job |
+| Drag with the left mouse button | Select visible text anywhere; release to copy |
+| Alt+Y / Ctrl+Shift+C / Ctrl+Insert | Copy the focused field, search, activity line, or details |
+| Ctrl+V / Shift+Insert, or terminal Paste | Paste into the current text field or search |
 | `q` | Quit when no job is running |
 
 Forms use Tab to select a field, Space to toggle flags, and Ctrl+U to clear a
 value. `F5` (or Ctrl+Enter) runs the operation. `Ctrl+Y` copies the equivalent CLI
 command using the system clipboard helper; it is also retained in Activity.
+Outside forms, Ctrl+Y copies the focused text. Cmd+V on macOS and the terminal's
+Paste action also work through bracketed paste. Pasting on Entrypoints or Flows
+starts a search; read-only screens and toggle fields ignore pasted text. Search
+converts line breaks to spaces, while form values preserve multiline YAML and
+labels. Paste appends to the value; Ctrl+U clears it first when replacing it.
+Pasted text never submits a form or triggers keyboard shortcuts.
+
+Drag selection works across lists, details, Activity, and popups, and copies the
+visible text on release. Keyboard copy preserves the full value even when the
+display truncates it. The standalone picker uses the terminal's native mouse
+selection and the same keyboard clipboard shortcuts. Clipboard helpers are
+`pbcopy`/`pbpaste` on macOS, `wl-copy`/`wl-paste`, `xclip`, or `xsel` on Linux,
+and PowerShell on Windows. An unavailable clipboard is reported without closing
+the TUI; terminal Paste remains available. Ctrl+C continues to cancel work.
+
 Multi-file positional fields accept shell-style quotes around paths containing
 spaces. Values are passed as arguments and never evaluated by a shell.
 

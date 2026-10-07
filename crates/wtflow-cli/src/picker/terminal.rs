@@ -1,4 +1,5 @@
 use super::Item;
+use crate::clipboard;
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
@@ -57,6 +58,7 @@ struct Selection {
     selected: usize,
     offset: usize,
     allow_new: bool,
+    status: String,
 }
 impl Selection {
     fn new(items: &[Item], allow_new: bool, initial_query: &str) -> Self {
@@ -66,6 +68,7 @@ impl Selection {
             selected: usize::from(allow_new && items.iter().any(|i| !i.is_test)),
             offset: 0,
             allow_new,
+            status: String::new(),
         }
     }
     fn matches(&self, items: &[Item]) -> Vec<usize> {
@@ -89,6 +92,21 @@ impl Selection {
     fn reset(&mut self, items: &[Item]) {
         self.selected = usize::from(self.allow_new && self.matches(items).len() > 1);
         self.offset = 0;
+    }
+    fn paste(&mut self, text: &str, items: &[Item]) {
+        self.query.push_str(&clipboard::paste_text(text, false));
+        self.reset(items);
+        self.status.clear();
+    }
+    fn copy_text(&self, items: &[Item]) -> String {
+        if !self.query.is_empty() {
+            return self.query.clone();
+        }
+        self.matches(items)
+            .get(self.selected)
+            .and_then(|i| items.get(*i))
+            .map(|item| format!("{}\n{}\n{}", item.title, item.symbol, item.path))
+            .unwrap_or_default()
     }
     fn viewport(&mut self, count: usize, rows: usize) {
         self.selected = self.selected.min(count.saturating_sub(1));
@@ -252,13 +270,18 @@ fn draw(
         &mut out,
         height - 1,
         &format!(
-            "{} / {}",
+            "{} / {} · {}",
             if matches.is_empty() {
                 0
             } else {
                 state.selected + 1
             },
-            matches.len()
+            matches.len(),
+            if state.status.is_empty() {
+                "Alt+Y copy · Ctrl+V paste"
+            } else {
+                &state.status
+            }
         ),
         width,
     )?;
@@ -281,6 +304,25 @@ pub fn choose(
         match event::read()? {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 let control = key.modifiers.contains(KeyModifiers::CONTROL);
+                if clipboard::copy_key(key) || (control && key.code == KeyCode::Char('y')) {
+                    let text = state.copy_text(items);
+                    state.status = if text.is_empty() {
+                        "No text to copy".into()
+                    } else {
+                        match clipboard::copy(&text) {
+                            Ok(()) => "Copied to clipboard".into(),
+                            Err(error) => error.to_string(),
+                        }
+                    };
+                    continue;
+                }
+                if clipboard::paste_key(key) {
+                    match clipboard::read() {
+                        Ok(text) => state.paste(&text, items),
+                        Err(error) => state.status = error.to_string(),
+                    }
+                    continue;
+                }
                 match key.code {
                     KeyCode::Char('c') if control => return Ok(None),
                     KeyCode::Esc if state.query.is_empty() => return Ok(None),
@@ -309,7 +351,12 @@ pub fn choose(
                         state.query.pop();
                         state.reset(items);
                     }
-                    KeyCode::Char(c) if !control && !key.modifiers.contains(KeyModifiers::ALT) => {
+                    KeyCode::Char(c)
+                        if !control
+                            && !key
+                                .modifiers
+                                .intersects(KeyModifiers::ALT | KeyModifiers::SUPER) =>
+                    {
                         state.query.push(c);
                         state.reset(items);
                     }
@@ -317,8 +364,7 @@ pub fn choose(
                 }
             }
             Event::Paste(text) => {
-                state.query.extend(text.chars().filter(|c| !c.is_control()));
-                state.reset(items);
+                state.paste(&text, items);
             }
             _ => {}
         }
@@ -328,6 +374,25 @@ pub fn choose(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clipboard_text_is_literal_and_filter_paste_resets_selection() {
+        let items = vec![Item {
+            title: "Order".into(),
+            symbol: "Orders.create".into(),
+            path: "src/café.ts".into(),
+            is_test: false,
+        }];
+        let mut state = Selection::new(&items, false, "");
+        assert_eq!(state.copy_text(&items), "Order\nOrders.create\nsrc/café.ts");
+        state.offset = 20;
+        state.selected = 20;
+        state.paste("Orders\r\ncreate\x1b", &items);
+        assert_eq!(state.query, "Orders create");
+        assert_eq!(state.copy_text(&items), "Orders create");
+        assert_eq!(state.offset, 0);
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.matches(&items), [0]);
+    }
     #[test]
     fn selection_stays_visible_and_filtering_keeps_identity() {
         let items: Vec<_> = (0..20)

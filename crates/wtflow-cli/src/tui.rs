@@ -1,8 +1,9 @@
 //! Persistent terminal workspace. All operations go through the shared command contract.
 mod catalog;
 mod explorer;
-use crate::{app, runtime, Command};
-use anyhow::{Context, Result};
+mod selection;
+use crate::{app, clipboard, runtime, Command};
+use anyhow::Result;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -17,7 +18,7 @@ use ratatui::{
 };
 use std::{
     collections::BTreeSet,
-    io::{self, IsTerminal, Write},
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -202,6 +203,7 @@ struct Workspace {
     details_offset: u16,
     list_area: Rect,
     help: bool,
+    selection: selection::Selection,
 }
 impl Workspace {
     fn new(root: PathBuf) -> Self {
@@ -225,6 +227,7 @@ impl Workspace {
             details_offset: 0,
             list_area: Rect::default(),
             help: false,
+            selection: selection::Selection::default(),
         }
     }
     fn launch(&mut self, command: Option<Command>) {
@@ -478,13 +481,21 @@ impl Workspace {
             .min(count.saturating_sub(1));
     }
     fn mouse(&mut self, mouse: MouseEvent) {
+        if self.selection.mouse(mouse) {
+            if matches!(mouse.kind, MouseEventKind::Up(event::MouseButton::Left)) {
+                if let Some(text) = self.selection.text.clone() {
+                    self.copy(&text);
+                }
+            }
+            return;
+        }
         if self.form.is_some() || self.help {
             return;
         }
         match mouse.kind {
             MouseEventKind::ScrollDown => self.navigate(3),
             MouseEventKind::ScrollUp => self.navigate(-3),
-            MouseEventKind::Moved | MouseEventKind::Down(event::MouseButton::Left)
+            MouseEventKind::Moved | MouseEventKind::Up(event::MouseButton::Left)
                 if self
                     .list_area
                     .contains(Position::new(mouse.column, mouse.row)) =>
@@ -554,7 +565,27 @@ impl Workspace {
         }
     }
     fn key(&mut self, key: KeyEvent) -> Result<bool> {
-        if key.kind != KeyEventKind::Press {
+        if key.kind == KeyEventKind::Release {
+            return Ok(false);
+        }
+        if clipboard::copy_key(key)
+            || (self.form.is_none()
+                && key.code == KeyCode::Char('y')
+                && key.modifiers.contains(KeyModifiers::CONTROL))
+        {
+            self.copy(&self.copy_text());
+            return Ok(false);
+        }
+        self.selection.clear();
+        if clipboard::paste_key(key) {
+            if self.can_paste() {
+                match clipboard::read() {
+                    Ok(text) => self.paste(&text),
+                    Err(error) => self.status = error.to_string(),
+                }
+            } else {
+                self.status = "Select a text field or an entrypoint/flow search to paste".into();
+            }
             return Ok(false);
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -578,10 +609,19 @@ impl Workspace {
         if self.searching {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => self.searching = false,
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.query.clear();
+                }
                 KeyCode::Backspace => {
                     self.query.pop();
                 }
-                KeyCode::Char(c) => self.query.push(c),
+                KeyCode::Char(c)
+                    if !key.modifiers.intersects(
+                        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                    ) =>
+                {
+                    self.query.push(c)
+                }
                 _ => {}
             }
             self.selected[self.tab] = 0;
@@ -604,6 +644,12 @@ impl Workspace {
             self.details_offset = self
                 .details_offset
                 .saturating_add_signed(if key.code == KeyCode::PageUp { -5 } else { 5 });
+            return Ok(false);
+        }
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
             return Ok(false);
         }
         match key.code {
@@ -760,7 +806,7 @@ impl Workspace {
         if key.code == KeyCode::Char('y') && key.modifiers.contains(KeyModifiers::CONTROL) {
             let text = self.form.as_ref().unwrap().equivalent(&self.root);
             self.activity.push(text.clone());
-            self.status = match copy_command(&text) {
+            self.status = match clipboard::copy(&text) {
                 Ok(()) => "Equivalent command copied".into(),
                 Err(_) => "Clipboard unavailable; equivalent command saved in Activity".into(),
             };
@@ -795,7 +841,11 @@ impl Workspace {
                         KeyCode::Backspace => {
                             field.value.pop();
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c)
+                            if !key.modifiers.intersects(
+                                KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                            ) =>
+                        {
                             field.value.push(c)
                         }
                         _ => {}
@@ -805,6 +855,64 @@ impl Workspace {
         }
         form.error.clear();
         Ok(())
+    }
+    fn copy_text(&self) -> String {
+        if let Some(text) = &self.selection.text {
+            return text.clone();
+        }
+        if let Some(form) = &self.form {
+            return form
+                .fields
+                .get(form.selected)
+                .map(|f| f.value.clone())
+                .unwrap_or_default();
+        }
+        if self.searching {
+            return self.query.clone();
+        }
+        if self.tab == 4 {
+            return self
+                .activity
+                .get(self.selected[4])
+                .cloned()
+                .unwrap_or_default();
+        }
+        self.details()
+    }
+    fn copy(&mut self, text: &str) {
+        if text.is_empty() {
+            self.status = "No text to copy".into();
+            return;
+        }
+        self.status = match clipboard::copy(text) {
+            Ok(()) => "Copied to clipboard".into(),
+            Err(error) => error.to_string(),
+        };
+    }
+    fn can_paste(&self) -> bool {
+        !self.help
+            && if let Some(form) = &self.form {
+                form.fields.get(form.selected).is_some_and(|f| !f.toggle)
+            } else {
+                self.searching || (matches!(self.tab, 1 | 2) && self.explorer.is_none())
+            }
+    }
+    fn paste(&mut self, text: &str) {
+        if !self.can_paste() {
+            return;
+        }
+        self.selection.clear();
+        if let Some(form) = &mut self.form {
+            if let Some(field) = form.fields.get_mut(form.selected) {
+                field.value.push_str(&clipboard::paste_text(text, true));
+                form.error.clear();
+            }
+        } else {
+            self.searching = true;
+            self.query.push_str(&clipboard::paste_text(text, false));
+            self.selected[self.tab] = 0;
+            self.offset = 0;
+        }
     }
     fn details(&self) -> String {
         if let Some(ex) = &self.explorer {
@@ -1069,11 +1177,11 @@ impl Workspace {
         );
         frame.render_widget(
             Paragraph::new(if self.searching {
-                "Search: type · Enter done · Esc done"
+                "Search: Ctrl+V paste · Alt+Y copy · Enter done"
             } else if area.width < 80 {
                 "Tab panels  Enter open  d details  ? help  q quit"
             } else {
-                "Tab section  Enter open  / search  d details  Ctrl+P actions  ? help  q quit"
+                "Tab section  Enter open  / search  Alt+Y copy  Ctrl+V paste  ? help  q quit"
             })
             .dim(),
             regions[3],
@@ -1102,10 +1210,11 @@ impl Workspace {
             draw_form(frame, form, &self.root);
         }
         if self.help {
-            let popup = popup(area, 78, 24);
+            let popup = popup(area, 78, 28);
             frame.render_widget(Clear, popup);
-            frame.render_widget(Paragraph::new("Tab / Shift+Tab: section    1–6: jump to section\n↑ ↓ / j k: select    Page Up/Down: scroll\nEnter: open / expand    ←: collapse / parent\nEsc: back    *: expand entire flow\n/ : search    F2: include tests    d: details on narrow screens\n\ni: index    r: refresh / discover / update\na: analyze    e: export    c: check    l: labels\nCtrl+P: all CLI operations\n\nForms: Tab moves, Space toggles, Ctrl+U clears\nF5 / Ctrl+Enter: run    Ctrl+Y: copy CLI command\nEsc: close form without applying\n\nCtrl+C: cancel job    q: quit when idle\n\nPaths and text are data; no shell commands are evaluated.\nPress any key to close.").block(panel(" Keyboard help ")).wrap(Wrap { trim: false }), popup);
+            frame.render_widget(Paragraph::new("Tab / Shift+Tab: section    1–6: jump to section\n↑ ↓ / j k: select    Page Up/Down: scroll\nEnter: open / expand    ←: collapse / parent\nEsc: back    *: expand entire flow\n/ : search    F2: include tests    d: details on narrow screens\n\ni: index    r: refresh / discover / update\na: analyze    e: export    c: check    l: labels\nCtrl+P: all CLI operations\n\nForms: Tab moves, Space toggles, Ctrl+U clears\nF5 / Ctrl+Enter: run    Ctrl+Y: copy CLI command\nEsc: close form without applying\n\nDrag text: release to copy (any pane or popup)\nAlt+Y / Ctrl+Shift+C / Ctrl+Insert: copy focused text\nCtrl+V / Shift+Insert / terminal Paste: paste\nSearch: line breaks become spaces; forms keep newlines\n\nCtrl+C: cancel job    q: quit when idle\n\nPaths and text are data; no shell commands are evaluated.\nPress any key to close.").block(panel(" Keyboard help ")).wrap(Wrap { trim: false }), popup);
         }
+        self.selection.draw(frame);
     }
 }
 impl Drop for Workspace {
@@ -1224,42 +1333,15 @@ fn draw_form(frame: &mut Frame, form: &catalog::Form, root: &Path) {
     );
     frame.render_widget(
         Paragraph::new(if area.height < 16 {
-            "Tab next · Space toggle · F5 run · Esc back"
+            "Tab next · F5 run · Alt+Y copy · Ctrl+V paste"
         } else if form.name == "config" {
-            "Tab field · Ctrl+U clear · F5 save default\nCtrl+Y copy command · Esc cancel"
+            "Tab field · Ctrl+U clear · F5 save default\nAlt+Y copy value · Ctrl+V paste · Ctrl+Y command · Esc cancel"
         } else {
-            "Tab field · Ctrl+U clear · Space toggle · F5 run\nCtrl+Y copy command · Esc cancel"
+            "Tab field · Ctrl+U clear · Space toggle · F5 run\nAlt+Y copy value · Ctrl+V paste · Ctrl+Y command · Esc cancel"
         })
         .wrap(Wrap { trim: false }),
         regions[4],
     );
-}
-fn copy_command(text: &str) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    let choices: Vec<(&str, Vec<&str>)> = vec![("pbcopy", vec![])];
-    #[cfg(not(target_os = "macos"))]
-    let choices: Vec<(&str, Vec<&str>)> = vec![
-        ("wl-copy", vec![]),
-        ("xclip", vec!["-selection", "clipboard"]),
-    ];
-    for (program, args) in choices {
-        if let Ok(mut child) = std::process::Command::new(program)
-            .args(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            child
-                .stdin
-                .take()
-                .context("clipboard stdin")?
-                .write_all(text.as_bytes())?;
-            anyhow::ensure!(child.wait()?.success(), "clipboard failed");
-            return Ok(());
-        }
-    }
-    anyhow::bail!("No clipboard helper")
 }
 struct Screen;
 impl Screen {
@@ -1316,17 +1398,7 @@ pub fn run(dir: &Path) -> Result<()> {
                         workspace.activity.push(message);
                     }
                 },
-                Event::Paste(text) => {
-                    if let Some(form) = &mut workspace.form {
-                        if let Some(field) = form.fields.get_mut(form.selected) {
-                            if !field.toggle {
-                                field.value.push_str(&clean(&text));
-                            }
-                        }
-                    } else if workspace.searching {
-                        workspace.query.push_str(&clean(&text));
-                    }
-                }
+                Event::Paste(text) => workspace.paste(&text),
                 Event::Mouse(mouse) => workspace.mouse(mouse),
                 _ => {}
             }
@@ -1364,5 +1436,115 @@ mod tests {
         ws.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
             .unwrap();
         assert!(ws.query.is_empty());
+    }
+    #[test]
+    fn every_form_field_pastes_and_copies_without_submitting_or_changing_toggles() {
+        let mut ws = Workspace::new(PathBuf::from("/project"));
+        let text = "café 🐈\r\nnext\tvalue\x1b\0";
+        for (name, _) in catalog::commands() {
+            ws.form(&name);
+            let count = ws.form.as_ref().unwrap().fields.len();
+            for i in 0..count {
+                let form = ws.form.as_mut().unwrap();
+                form.selected = i;
+                form.error = "old validation error".into();
+                let field = &mut form.fields[i];
+                let before = field.value.clone();
+                let toggle = field.toggle;
+                ws.paste(text);
+                let form = ws.form.as_ref().unwrap();
+                let expected = if toggle {
+                    before
+                } else {
+                    before + "café 🐈\nnext\tvalue"
+                };
+                assert_eq!(form.fields[i].value, expected, "{name} field {i}");
+                assert_eq!(ws.copy_text(), expected, "{name} field {i}");
+                assert!(ws.job.is_none());
+                if !toggle {
+                    assert!(form.error.is_empty());
+                }
+            }
+        }
+    }
+    #[test]
+    fn search_paste_resets_navigation_and_read_only_screens_ignore_it() {
+        let mut ws = Workspace::new(PathBuf::from("/project"));
+        for tab in 0..6 {
+            ws.tab = tab;
+            ws.searching = false;
+            ws.query.clear();
+            ws.selected[tab] = 10;
+            ws.offset = 8;
+            ws.paste("one\r\ntwo");
+            if matches!(tab, 1 | 2) {
+                assert_eq!(ws.query, "one two");
+                assert_eq!(ws.selected[tab], 0);
+                assert_eq!(ws.offset, 0);
+                assert!(ws.searching);
+                assert_eq!(ws.copy_text(), "one two");
+                ws.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+                    .unwrap();
+                assert!(ws.query.is_empty());
+                ws.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL))
+                    .unwrap();
+                assert!(ws.query.is_empty());
+            } else {
+                assert!(ws.query.is_empty());
+                assert!(!ws.searching);
+            }
+        }
+        ws.tab = 1;
+        ws.help = true;
+        ws.paste("ignore");
+        assert!(ws.query.is_empty());
+    }
+    #[test]
+    fn focused_copy_includes_full_details_activity_and_source() {
+        let mut ws = Workspace::new(PathBuf::from("/project"));
+        assert!(ws.copy_text().contains("Initialize project"));
+        ws.tab = 3;
+        assert!(ws.copy_text().contains("analysis.resolver"));
+        ws.tab = 4;
+        ws.activity
+            .push("full untruncated diagnostic 🐈".repeat(20));
+        assert_eq!(ws.copy_text(), ws.activity[0]);
+        let flow = wtflow_core::yaml::load(
+            include_str!("../../../testdata/golden/core.flow.yaml"),
+            "test",
+        )
+        .unwrap();
+        ws.open_flow(PathBuf::from("/not-found.flow.yaml"), flow);
+        let expected = ws.details();
+        assert!(!expected.is_empty());
+        assert_eq!(ws.copy_text(), expected);
+        ws.paste("must not edit flow");
+        assert_eq!(ws.copy_text(), expected);
+        assert!(ws.query.is_empty());
+    }
+    #[test]
+    fn clicks_still_select_rows_and_drag_does_not_change_focus() {
+        let mut ws = Workspace::new(PathBuf::from("/project"));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 35)).unwrap();
+        terminal.draw(|frame| ws.draw(frame)).unwrap();
+        let mouse = |kind, row| MouseEvent {
+            kind,
+            column: 3,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let row = ws.list_area.y + 2;
+        ws.mouse(mouse(MouseEventKind::Down(event::MouseButton::Left), row));
+        ws.mouse(mouse(MouseEventKind::Up(event::MouseButton::Left), row));
+        assert_eq!(ws.selected[0], 2);
+        ws.mouse(mouse(MouseEventKind::Down(event::MouseButton::Left), row));
+        ws.mouse(mouse(
+            MouseEventKind::Drag(event::MouseButton::Left),
+            row + 2,
+        ));
+        assert_eq!(ws.selected[0], 2);
+        ws.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        assert!(ws.selection.text.is_none());
     }
 }
