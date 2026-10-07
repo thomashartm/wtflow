@@ -138,3 +138,41 @@ second`,
         .unwrap();
     assert_eq!(flow.fingerprint, updated.fingerprint);
 }
+
+#[test]
+fn multiline_foreach_receivers_produce_valid_flow_code() {
+    let root = tempfile::tempdir().unwrap();
+    let source = r#"function process(requestedRelations: string[]) {
+  [...requestedRelations]
+    .filter((r) => r !== 'accountTransaction' && !r.startsWith('accountTransaction.'))
+    .sort((a, b) => a.split('.').length - b.split('.').length)
+    .forEach((relation) => { send(relation); });
+}"#;
+    let expected = "[...requestedRelations] .filter((r) => r !== 'accountTransaction' && !r.startsWith('accountTransaction.')) .sort((a, b) => a.split('.').length - b.split('.').length)";
+    let mut fingerprint = None;
+    for source in [
+        source.to_owned(),
+        source.replace('\n', "\r\n"),
+        source.replace(
+            "    .sort",
+            "    // Don't let this comment's quote hide the next call.\n    .sort",
+        ),
+    ] {
+        std::fs::write(root.path().join("relations.ts"), source).unwrap();
+        let flow = wtflow_extract::Cx::load(root.path())
+            .unwrap()
+            .extract("relations.ts", "process", None, 0)
+            .unwrap();
+        let node = &flow.steps[0];
+        assert_eq!(node.kind, wtflow_core::Kind::ForEach);
+        assert_eq!(node.code, expected);
+        assert_eq!(node.body[0].code, "send(relation)");
+        let yaml = wtflow_core::yaml::emit(&flow).unwrap();
+        let loaded = wtflow_core::yaml::load(&yaml, "relations.flow.yaml").unwrap();
+        assert_eq!(loaded.steps, flow.steps);
+        if let Some(previous) = &fingerprint {
+            assert_eq!(&flow.fingerprint, previous);
+        }
+        fingerprint = Some(flow.fingerprint);
+    }
+}

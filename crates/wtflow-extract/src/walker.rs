@@ -360,9 +360,13 @@ impl Walker<'_> {
         }
         let callee_text = functions::callee_text(self.file, call);
         if callee_text.ends_with(".forEach") {
+            let callee_code = call
+                .child_by_field_name("function")
+                .map(|callee| self.text(callee))
+                .unwrap_or_else(|| crate::source::normalized(callee_text));
             let mut node = self.node(
                 Kind::ForEach,
-                callee_text.trim_end_matches(".forEach"),
+                callee_code.trim_end_matches(".forEach").trim_end(),
                 call,
             );
             if let Some(cb) = callback(call) {

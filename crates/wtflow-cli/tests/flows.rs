@@ -122,6 +122,40 @@ fn first_run_saves_analysis_and_later_runs_find_it_from_subdirectories() {
 }
 
 #[test]
+fn selecting_an_entry_with_a_multiline_foreach_saves_a_valid_flow() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("relations.ts"),
+        r#"@Controller('relations')
+class RelationsController {
+  @Post()
+  process(requestedRelations: string[]) {
+    [...requestedRelations]
+      .filter((r) => r !== 'accountTransaction' && !r.startsWith('accountTransaction.'))
+      .sort((a, b) => a.split('.').length - b.split('.').length)
+      .forEach((relation) => { send(relation); });
+  }
+}"#,
+    )
+    .unwrap();
+    let output = browse(root.path(), &["--no-progress"], "1\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved = fs::read_dir(root.path().join(".wtflow/flows"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "yaml"))
+        .unwrap();
+    let flow = wtflow_core::yaml::load(&fs::read_to_string(&saved).unwrap(), "test").unwrap();
+    assert_eq!(flow.steps[0].kind, wtflow_core::Kind::ForEach);
+    assert_eq!(flow.steps[0].body[0].code, "send(relation)");
+    assert!(saved.with_extension("md").is_file());
+}
+
+#[test]
 fn quitting_and_empty_directories_do_not_create_diagrams() {
     let root = tempfile::tempdir().unwrap();
     let empty = browse(root.path(), &[], "");
