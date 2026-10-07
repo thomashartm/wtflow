@@ -18,7 +18,7 @@ pub fn controls(form: &catalog::Form) -> Vec<Control> {
     let mut controls = Vec::new();
     for (i, field) in form.fields.iter().enumerate() {
         if form.name == "index" && field.id == "lang" {
-            for language in ["", "ts", "java", "py"] {
+            for language in ["ts", "java", "py"] {
                 controls.push(Control::Language(i, language));
             }
         } else {
@@ -45,17 +45,13 @@ pub fn field_index(form: &catalog::Form) -> Option<usize> {
 
 pub fn toggle_language(form: &mut catalog::Form, index: usize, language: &str) {
     let field = &mut form.fields[index];
-    if language.is_empty() {
-        field.value.clear();
+    let mut languages: Vec<_> = field.value.split(',').filter(|s| !s.is_empty()).collect();
+    if languages.contains(&language) {
+        languages.retain(|s| *s != language);
     } else {
-        let mut languages: Vec<_> = field.value.split(',').filter(|s| !s.is_empty()).collect();
-        if languages.contains(&language) {
-            languages.retain(|s| *s != language);
-        } else {
-            languages.push(language);
-        }
-        field.value = languages.join(",");
+        languages.push(language);
     }
+    field.value = languages.join(",");
 }
 
 fn checked(value: bool) -> &'static str {
@@ -136,13 +132,8 @@ pub fn draw(frame: &mut Frame, form: &mut catalog::Form, root: &Path) -> Vec<(Re
             let text = match *control {
                 Control::Language(i, language) => {
                     let value = &form.fields[i].value;
-                    let enabled = if language.is_empty() {
-                        value.is_empty()
-                    } else {
-                        value.split(',').any(|s| s == language)
-                    };
+                    let enabled = value.split(',').any(|s| s == language);
                     let label = match language {
-                        "" => "Use project languages",
                         "ts" => "TypeScript / JavaScript",
                         "java" => "Java",
                         _ => "Python",
@@ -201,7 +192,7 @@ pub fn draw(frame: &mut Frame, form: &mut catalog::Form, root: &Path) -> Vec<(Re
         form.error.clone()
     } else {
         match selected(form) {
-            Control::Language(_, _) => "Use project languages indexes all enabled languages. Individual choices limit this run; languages must also be enabled in Settings.".into(),
+            Control::Language(_, _) => "Detected languages are preselected unless disabled in Settings. Check languages to index for this run; project settings are not changed.".into(),
             Control::Field(i) => form.fields[i].help.clone(),
             Control::Submit => format!("{} with the selected options. Progress appears in Activity.", action(form)),
             Control::Cancel => "Close without running or saving changes.".into(),

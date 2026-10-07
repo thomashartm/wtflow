@@ -132,3 +132,83 @@ fn failed_rebuild_does_not_replace_the_previous_index_or_metadata() {
         2
     );
 }
+
+#[test]
+fn detected_languages_work_without_config_and_explicit_selection_overrides_disabled_defaults() {
+    for config in [
+        None,
+        Some("collapse: false\n"),
+        Some("index:\n  typescript:\n    args: [--custom]\n"),
+        Some("index:\n  typescript:\n    enabled: false\n"),
+    ] {
+        let root = project();
+        fs::remove_file(root.path().join(".wtflow.yaml")).unwrap();
+        if let Some(config) = config {
+            fs::write(root.path().join(".wtflow.yaml"), config).unwrap();
+        }
+        indexer(root.path(), "while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --output ]; then shift; destination=$1; fi; shift; done\nprintf 'fixture index' > \"$destination\"");
+        let disabled = config.is_some_and(|c| c.contains("enabled: false"));
+        let output = index(root.path(), &[]);
+        assert_eq!(
+            output.status.success(),
+            !disabled,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if disabled {
+            assert!(!root.path().join(".wtflow/index/typescript.scip").exists());
+            let explicit = index(root.path(), &["--lang", "ts"]);
+            assert!(
+                explicit.status.success(),
+                "{}",
+                String::from_utf8_lossy(&explicit.stderr)
+            );
+        }
+        let log = fs::read_to_string(root.path().join(if disabled {
+            ".wtflow/logs/index-000002.log"
+        } else {
+            ".wtflow/logs/index-000001.log"
+        }))
+        .unwrap();
+        if config.is_some_and(|c| c.contains("--custom")) {
+            assert!(log.contains("--custom"));
+        }
+        if config.is_none() {
+            assert!(log.contains("--infer-tsconfig"));
+        }
+        assert!(!root.path().join(".wtflow/config.yaml").exists());
+        if let Some(config) = config {
+            assert_eq!(
+                fs::read_to_string(root.path().join(".wtflow.yaml")).unwrap(),
+                config
+            );
+        }
+    }
+}
+
+#[test]
+fn python_default_project_name_and_explicit_languages_match_detected_defaults() {
+    let root = project();
+    fs::remove_file(root.path().join(".wtflow.yaml")).unwrap();
+    fs::remove_file(root.path().join("entry.ts")).unwrap();
+    fs::write(root.path().join("app.py"), "print('hello')\n").unwrap();
+    indexer(root.path(), "printf '%s\\n' \"$@\"\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = --output ]; then shift; destination=$1; fi; shift; done\nprintf 'fixture index' > \"$destination\"");
+    let output = index(root.path(), &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let first = fs::read(root.path().join(".wtflow/index/python.scip")).unwrap();
+    let explicit = index(root.path(), &["--lang", "py", "--force"]);
+    assert!(explicit.status.success());
+    assert_eq!(
+        first,
+        fs::read(root.path().join(".wtflow/index/python.scip")).unwrap()
+    );
+    let log = fs::read_to_string(root.path().join(".wtflow/logs/index-000001.log")).unwrap();
+    assert!(log.contains(&format!(
+        "--project-name {}",
+        root.path().file_name().unwrap().to_string_lossy()
+    )));
+}

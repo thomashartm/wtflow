@@ -89,7 +89,7 @@ pub struct IndexConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Indexer {
-    #[serde(default)]
+    #[serde(default = "yes")]
     pub enabled: bool,
     #[serde(default)]
     pub args: Vec<String>,

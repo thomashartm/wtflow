@@ -132,7 +132,7 @@ enum Command {
     },
     /// Build or refresh the project index to follow calls between files
     Index {
-        /// Languages to index, separated by commas: ts, java, py
+        /// Languages to index: ts, java, py (default: detected languages; explicit choices override disabled defaults)
         #[arg(long, value_delimiter = ',')]
         lang: Vec<String>,
         /// Rebuild indexes even when source files have not changed

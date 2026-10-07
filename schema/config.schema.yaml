@@ -48,7 +48,7 @@ properties:
         properties:
           enabled:
             type: "boolean"
-            description: "Enable this indexer."
+            description: "Enabled by default when source files are present. False excludes it from default indexing; explicit --lang overrides it."
           args:
             type: "array"
             description: "Additional indexer arguments."
@@ -62,7 +62,7 @@ properties:
         properties:
           enabled:
             type: "boolean"
-            description: "Enable this indexer."
+            description: "Enabled by default when source files are present. False excludes it from default indexing; explicit --lang overrides it."
           args:
             type: "array"
             description: "Additional indexer arguments."
@@ -76,7 +76,7 @@ properties:
         properties:
           enabled:
             type: "boolean"
-            description: "Enable this indexer."
+            description: "Enabled by default when source files are present. False excludes it from default indexing; explicit --lang overrides it."
           args:
             type: "array"
             description: "Additional indexer arguments."
@@ -85,7 +85,7 @@ properties:
               description: "A value."
           project_name:
             type: "string"
-            description: "Python project name."
+            description: "Python project name, defaulting to the project folder name."
   rules:
     type: "array"
     description: "Ordered call classification rules."
