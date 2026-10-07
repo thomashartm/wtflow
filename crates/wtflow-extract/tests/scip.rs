@@ -70,7 +70,7 @@ fn stale_inlined_target_uses_heuristic_without_scip_symbol() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = root("ts");
     for file in [
-        ".wtflow.yaml",
+        ".wtflow/config.yaml",
         ".wtflow/index/meta.yaml",
         ".wtflow/index/typescript.scip",
         "src/reconciliation/service.ts",
@@ -143,7 +143,7 @@ fn context_packets_have_real_documentation_paths_neighbors_and_glossary() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = root("ts");
     for file in [
-        ".wtflow.yaml",
+        ".wtflow/config.yaml",
         "src/dispatch.ts",
         "src/matching/matchers.ts",
         "src/matching/index.ts",

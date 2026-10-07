@@ -59,38 +59,70 @@ fn execute(
     log.file.flush()?;
     let mut command = Command::new(job.program);
     command.current_dir(root).args(&job.prefix).args(args);
-    if capture {
-        let result = command.output().with_context(|| {
-            format!(
-                "missing tool {} for {}; Docker alternative: {DOCKER}",
-                job.program, job.name
-            )
-        })?;
-        log.file.write_all(&result.stdout)?;
-        log.file.write_all(&result.stderr)?;
-        anyhow::ensure!(
-            result.status.success(),
-            "{} failed: {}; Docker alternative: {DOCKER}",
-            job.name,
-            String::from_utf8_lossy(&result.stderr)
-        );
-        Ok(String::from_utf8(result.stdout)?.trim().to_owned())
+    crate::runtime::checkpoint()?;
+    let mut captured = tempfile::tempfile()?;
+    command.stdout(Stdio::from(if capture {
+        captured.try_clone()?
     } else {
-        let status = command
-            .stdout(Stdio::from(log.file.try_clone()?))
-            .stderr(Stdio::from(log.file.try_clone()?))
-            .status()
-            .with_context(|| {
-                format!(
-                    "missing tool {} for {}; Docker alternative: {DOCKER}",
-                    job.program, job.name
-                )
-            })?;
-        anyhow::ensure!(
-            status.success(),
-            "{} failed with {status}; Docker alternative: {DOCKER}",
-            job.name
-        );
+        log.file.try_clone()?
+    }));
+    command.stderr(Stdio::from(log.file.try_clone()?));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    use std::io::{Read, Seek};
+    let mut live = File::open(root.join(&log.reference))?;
+    live.seek(std::io::SeekFrom::End(0))?;
+    let mut child = command.spawn().with_context(|| {
+        format!(
+            "missing tool {} for {}; Docker alternative: {DOCKER}",
+            job.program, job.name
+        )
+    })?;
+    let status = loop {
+        let mut bytes = Vec::new();
+        live.read_to_end(&mut bytes)?;
+        if !bytes.is_empty() {
+            crate::runtime::emit(crate::runtime::Event::Log(
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
+        }
+        if crate::runtime::cancelled() {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("Operation cancelled; indexer stopped");
+        }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let mut bytes = Vec::new();
+    live.read_to_end(&mut bytes)?;
+    if !bytes.is_empty() {
+        crate::runtime::emit(crate::runtime::Event::Log(
+            String::from_utf8_lossy(&bytes).into_owned(),
+        ));
+    }
+    anyhow::ensure!(
+        status.success(),
+        "{} failed with {status}; see index log. Docker alternative: {DOCKER}",
+        job.name
+    );
+    if capture {
+        captured.rewind()?;
+        let mut text = String::new();
+        captured.read_to_string(&mut text)?;
+        log.file.write_all(text.as_bytes())?;
+        Ok(text.trim().to_owned())
+    } else {
         Ok(String::new())
     }
 }
@@ -103,7 +135,7 @@ pub fn run(langs: &[String], force: bool, show_progress: bool) -> Result<()> {
         Err(error) => writeln!(log.file, "\nResult: failed\n{error:#}"),
     }
     .and_then(|()| log.file.sync_all());
-    eprintln!("Index log: {} (relative to project root)", log.reference);
+    crate::err!("Index log: {} (relative to project root)", log.reference);
     saved.context("finish index log")?;
     result
 }
@@ -166,10 +198,12 @@ fn run_logged(
                     "index".into(),
                     ".".into(),
                     "--project-name".into(),
-                    setting
-                        .project_name
-                        .clone()
-                        .context(".wtflow.yaml:1: index.python.project_name is required")?,
+                    setting.project_name.clone().with_context(|| {
+                        format!(
+                            "{}:1: index.python.project_name is required",
+                            config.path.display()
+                        )
+                    })?,
                 ],
             ),
         };
@@ -183,7 +217,11 @@ fn run_logged(
             lang,
         });
     }
-    anyhow::ensure!(!jobs.is_empty(),"no enabled indexers for languages present in this repository; configure .wtflow.yaml index");
+    anyhow::ensure!(
+        !jobs.is_empty(),
+        "no enabled indexers for languages present in this repository; configure index in {}",
+        config.path.display()
+    );
     let mut meta = Metadata::load(root)?.unwrap_or_default();
     let mut selected = BTreeMap::new();
     for path in &files {
@@ -210,20 +248,22 @@ fn run_logged(
     {
         progress.finish();
         writeln!(log.file, "Index is up to date; no indexers were run.")?;
-        eprintln!("index is up to date");
+        crate::err!("index is up to date");
         return Ok(());
     }
     std::fs::create_dir_all(root.join(".wtflow/index"))?;
     progress.finish();
+    let staging = tempfile::tempdir_in(root.join(".wtflow/index"))?;
     for job in &jobs {
         let _progress =
             crate::progress::Progress::start(show_progress, &format!("Indexing {}...", job.name));
         let version = execute(root, job, &["--version".into()], true, log)?;
-        execute(root, job, &job.args, false, log)?;
+        let staged = staging.path().join(format!("{}.scip", job.name));
+        let mut args = job.args.clone();
+        *args.last_mut().context("index output argument")? = staged.to_string_lossy().into_owned();
+        execute(root, job, &args, false, log)?;
         anyhow::ensure!(
-            root.join(format!(".wtflow/index/{}.scip", job.name))
-                .metadata()
-                .is_ok_and(|m| m.len() > 0),
+            staged.metadata().is_ok_and(|m| m.len() > 0),
             "{} did not produce its SCIP index",
             job.name
         );
@@ -231,6 +271,13 @@ fn run_logged(
             job.name.into(),
             version.lines().last().unwrap_or("unknown").into(),
         );
+    }
+    crate::runtime::checkpoint()?;
+    for job in &jobs {
+        fs::rename(
+            staging.path().join(format!("{}.scip", job.name)),
+            root.join(format!(".wtflow/index/{}.scip", job.name)),
+        )?;
     }
     meta.files.retain(|p, _| {
         !jobs
@@ -251,4 +298,59 @@ fn run_logged(
     meta.dirty = git(&["status", "--porcelain"]).map_or(true, |s| !s.is_empty());
     super::write(Some(&root.join(".wtflow/index/meta.yaml")), &meta.emit()?)?;
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod cancellation_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+    #[test]
+    fn cancelling_stops_the_indexer_and_its_children() {
+        let root = tempfile::tempdir().unwrap();
+        let mut log = IndexLog::create(root.path()).unwrap();
+        let job = Job {
+            name: "fixture",
+            program: "/bin/sh",
+            prefix: vec![],
+            args: vec![],
+            lang: Language::Ts,
+        };
+        let (events, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stop = cancelled.clone();
+        let waiter = std::thread::spawn(move || loop {
+            match receiver
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+            {
+                crate::runtime::Event::Log(text) if text.contains("ready") => {
+                    stop.store(true, Ordering::Relaxed);
+                    break;
+                }
+                _ => {}
+            }
+        });
+        let started = std::time::Instant::now();
+        let result =
+            crate::runtime::observe(crate::runtime::Observer { events, cancelled }, || {
+                execute(
+                    root.path(),
+                    &job,
+                    &[
+                        "-c".into(),
+                        "(sleep 2; touch survived) & echo ready; wait".into(),
+                    ],
+                    false,
+                    &mut log,
+                )
+            });
+        waiter.join().unwrap();
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        assert!(!root.path().join("survived").exists());
+    }
 }

@@ -39,7 +39,7 @@ fn indexer(root: &Path, body: &str) {
 #[test]
 fn indexing_does_not_parse_source_and_logs_both_streams_with_unique_references() {
     let root = project();
-    indexer(root.path(), "printf 'indexer stdout\\n'\nprintf 'indexer stderr\\n' >&2\nprintf 'fixture index' > .wtflow/index/typescript.scip");
+    indexer(root.path(), "printf 'indexer stdout\\n'\nprintf 'indexer stderr\\n' >&2\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = --output ]; then shift; destination=$1; fi; shift; done\nprintf 'fixture index' > \"$destination\"");
     let output = index(root.path(), &[]);
     assert!(
         output.status.success(),
@@ -100,4 +100,35 @@ fn indexer_failure_and_missing_tool_keep_logs_and_fail_the_command() {
     assert!(log.contains("build failed in indexer"));
     assert!(log.contains("Result: failed"));
     assert!(!root.path().join(".wtflow/index/meta.yaml").exists());
+}
+
+#[test]
+fn failed_rebuild_does_not_replace_the_previous_index_or_metadata() {
+    let root = project();
+    fs::create_dir_all(root.path().join(".wtflow/index")).unwrap();
+    fs::write(
+        root.path().join(".wtflow/index/typescript.scip"),
+        "previous index",
+    )
+    .unwrap();
+    let meta = wtflow_resolve::metadata::Metadata::default()
+        .emit()
+        .unwrap();
+    fs::write(root.path().join(".wtflow/index/meta.yaml"), &meta).unwrap();
+    indexer(root.path(), "while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --output ]; then shift; destination=$1; fi; shift; done\nprintf 'partial index' > \"$destination\"\nexit 7");
+    assert!(!index(root.path(), &["--force"]).status.success());
+    assert_eq!(
+        fs::read_to_string(root.path().join(".wtflow/index/typescript.scip")).unwrap(),
+        "previous index"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join(".wtflow/index/meta.yaml")).unwrap(),
+        meta
+    );
+    assert_eq!(
+        fs::read_dir(root.path().join(".wtflow/index"))
+            .unwrap()
+            .count(),
+        2
+    );
 }

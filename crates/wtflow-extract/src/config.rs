@@ -3,6 +3,8 @@ use regex::Regex;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use wtflow_core::Kind;
+pub const CONFIG_PATH: &str = ".wtflow/config.yaml";
+pub const LEGACY_CONFIG_PATH: &str = ".wtflow.yaml";
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -18,6 +20,52 @@ pub struct Config {
     pub index: IndexConfig,
     #[serde(default)]
     pub rules: Vec<Rule>,
+    #[serde(default)]
+    pub output: OutputConfig,
+    #[serde(default)]
+    pub analysis: AnalysisConfig,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OutputConfig {
+    pub flows_dir: PathBuf,
+    pub export_dir: Option<PathBuf>,
+    pub formats: Vec<String>,
+    pub lang: String,
+    pub detail: bool,
+    pub direction: String,
+    pub theme: String,
+    pub expanded: bool,
+    pub open: bool,
+}
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            flows_dir: ".wtflow/flows".into(),
+            export_dir: None,
+            formats: vec!["html".into(), "md".into(), "lint".into()],
+            lang: "en".into(),
+            detail: false,
+            direction: "TD".into(),
+            theme: "default".into(),
+            expanded: false,
+            open: false,
+        }
+    }
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AnalysisConfig {
+    pub depth: usize,
+    pub resolver: String,
+}
+impl Default for AnalysisConfig {
+    fn default() -> Self {
+        Self {
+            depth: crate::DEFAULT_DEPTH,
+            resolver: "auto".into(),
+        }
+    }
 }
 fn yes() -> bool {
     true
@@ -70,12 +118,32 @@ pub struct CompiledRule {
 }
 pub struct RepositoryConfig {
     pub root: PathBuf,
+    pub path: PathBuf,
     pub config: Config,
     pub rules: Vec<CompiledRule>,
     pub ignore: Vec<Regex>,
 }
 impl RepositoryConfig {
+    /// Prefer the current location within each project, then the legacy file.
+    /// A broken symlink or unreadable config must not silently load defaults.
+    pub fn existing_path(root: &Path) -> Result<Option<PathBuf>> {
+        for name in [CONFIG_PATH, LEGACY_CONFIG_PATH] {
+            let path = root.join(name);
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) => return Ok(Some(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("{}:1: locate config", path.display()))
+                }
+            }
+        }
+        Ok(None)
+    }
     pub fn discover(entry: &Path) -> Result<Self> {
+        Self::load(&Self::discover_root(entry)?)
+    }
+    pub fn discover_root(entry: &Path) -> Result<PathBuf> {
         let entry = entry
             .canonicalize()
             .with_context(|| format!("{}:1: cannot locate entry", entry.display()))?;
@@ -84,19 +152,22 @@ impl RepositoryConfig {
         } else {
             entry.parent().context("entry has no parent")?
         };
-        let root = start
-            .ancestors()
-            .find(|p| p.join(".wtflow.yaml").is_file())
-            .unwrap_or(start)
-            .to_owned();
-        Self::load(&root)
+        for root in start.ancestors() {
+            if Self::existing_path(root)?.is_some() {
+                return Ok(root.to_owned());
+            }
+        }
+        Ok(start.to_owned())
     }
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(".wtflow.yaml");
-        let mut config: Config = if path.exists() {
-            let value: serde_json::Value =
-                serde_yaml_ng::from_str(&std::fs::read_to_string(&path)?)
-                    .with_context(|| format!("{}: invalid YAML", path.display()))?;
+        let existing = Self::existing_path(root)?;
+        let path = existing.clone().unwrap_or_else(|| root.join(CONFIG_PATH));
+        let mut config: Config = if existing.is_some() {
+            let value: serde_json::Value = serde_yaml_ng::from_str(
+                &std::fs::read_to_string(&path)
+                    .with_context(|| format!("{}:1: read config", path.display()))?,
+            )
+            .with_context(|| format!("{}: invalid YAML", path.display()))?;
             wtflow_core::schema::validate(&value, true)
                 .with_context(|| format!("{}:1", path.display()))?;
             serde_json::from_value(value)?
@@ -138,6 +209,7 @@ impl RepositoryConfig {
         }
         Ok(Self {
             root: root.to_owned(),
+            path,
             config,
             rules,
             ignore,
