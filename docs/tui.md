@@ -48,9 +48,19 @@ description appears above.
 | Ctrl+V / Shift+Insert, or terminal Paste | Paste into the current text field or search |
 | `q` | Quit when no job is running |
 
-Forms use Tab to select a field, Space to toggle flags, and Ctrl+U to clear a
-value. `F5` (or Ctrl+Enter) runs the operation. `Ctrl+Y` copies the equivalent CLI
-command using the system clipboard helper; it is also retained in Activity.
+Forms use Tab or Up/Down to select a field or button, Space or Enter to toggle
+checkboxes, and Ctrl+U to clear a text value. Click a checkbox to toggle it;
+click a text field to edit it. Activate the visible action button with Enter or
+a click to run; **Cancel** closes without applying changes. `F5` (or Ctrl+Enter)
+also runs the operation.
+
+**Build / refresh index** offers language checkboxes and **Force rebuild (ignore
+cache)**. **Use project languages** indexes all enabled languages; individual
+choices limit this run to those languages (they must also be enabled in Settings).
+Choose **Build index**, or **Rebuild index** when force is checked, to start.
+
+`Ctrl+Y` copies the equivalent CLI command using the system clipboard helper;
+it is also retained in Activity.
 Outside forms, Ctrl+Y copies the focused text. Cmd+V on macOS and the terminal's
 Paste action also work through bracketed paste. Pasting on Entrypoints or Flows
 starts a search; read-only screens and toggle fields ignore pasted text. Search
